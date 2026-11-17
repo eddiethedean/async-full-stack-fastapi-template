@@ -1,5 +1,5 @@
 {
-  "name": "fastapi-full-stack-template",
+  "name": "async-full-stack-fastapi-template",
   "private": true,
   "workspaces": [
     "frontend",

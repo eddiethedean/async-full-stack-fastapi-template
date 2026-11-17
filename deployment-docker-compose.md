@@ -1,4 +1,4 @@
-# FastAPI Project - Docker Compose Deployment
+# Async Full Stack FastAPI - Docker Compose Deployment
 
 You can deploy the project to your own remote server with Docker Compose. The deployment configuration includes Traefik to handle HTTPS and route incoming traffic to the application.
 
@@ -24,7 +24,7 @@ Set the application domain, project name, and first superuser email:
 
 ```bash
 export DOMAIN=fastapi-project.example.com
-export PROJECT_NAME="Full Stack FastAPI Project"
+export PROJECT_NAME="Async Full Stack FastAPI"
 export FIRST_SUPERUSER=admin@example.com
 ```
 
@@ -62,7 +62,7 @@ The backend Docker image builds the frontend, so the server does not need Bun or
 
 ## Deploy with GitHub Actions
 
-The included `.github/workflows/deploy-docker-compose.yml` workflow runs the deployment commands on the server when manually triggered from GitHub Actions.
+Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
 
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 

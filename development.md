@@ -1,4 +1,4 @@
-# FastAPI Project - Development
+# Async Full Stack FastAPI - Development
 
 ## Local Development
 

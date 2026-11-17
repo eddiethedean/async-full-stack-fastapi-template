@@ -1,4 +1,4 @@
-# FastAPI Project - Deployment
+# Async Full Stack FastAPI - Deployment
 
 Deploy the project to [FastAPI Cloud](https://fastapicloud.com) with the included GitHub Actions workflow.
 
@@ -44,7 +44,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## Configure Continuous Deployment
 
-The included `.github/workflows/deploy.yml` workflow builds the frontend, prepares the database, and deploys the application whenever changes are pushed to `master`. You can also run it manually from the **Actions** tab.
+After configuring the application and repository secrets, set the repository variable `ENABLE_FASTAPI_CLOUD_DEPLOY` to `true`. The included `.github/workflows/deploy.yml` workflow then builds the frontend, prepares the database, and deploys on pushes to `master`. You can also run it manually from the **Actions** tab.
 
 Log in to FastAPI Cloud and configure the [deploy token](https://fastapicloud.com/docs/advanced-features/deploy-tokens/) and application ID as GitHub repository secrets:
 
@@ -88,10 +88,8 @@ For deployment to your own server, see the [Docker Compose deployment guide](./d
 
 ## GitHub Repository Automation
 
-Install the following GitHub Apps to enable the included repository automation:
+The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
 
-* [Latest Changes](https://github.com/apps/latest-changes) updates `release-notes.md` when a pull request is merged.
-* [PR Push](https://github.com/apps/pr-push) lets the pre-commit workflow push automated fixes to pull request branches.
-* [PR Submit](https://github.com/apps/pr-submit) lets the **Bump pre-commit hooks** and **Prepare Release** workflows create pull requests.
+The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
 To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokeshow), add `SMOKESHOW_AUTH_KEY` as a repository secret.

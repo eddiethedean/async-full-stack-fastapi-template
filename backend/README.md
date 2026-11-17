@@ -1,4 +1,4 @@
-# FastAPI Project - Backend
+# Async Full Stack FastAPI - Backend
 
 ## Requirements
 

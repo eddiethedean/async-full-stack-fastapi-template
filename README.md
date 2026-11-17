@@ -1,4 +1,8 @@
-# Full Stack FastAPI Template
+# Async Full Stack FastAPI
+
+A full-stack starter with asynchronous SQLModel database access, FastAPI, PostgreSQL, and a React frontend. Maintained by [Odos Matthews](https://github.com/eddiethedean).
+
+Based on the [Full Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template) by Sebastián Ramírez and its contributors.
 
 [![Test Docker Compose](../../actions/workflows/test-docker-compose.yml/badge.svg)](../../actions/workflows/test-docker-compose.yml)
 [![Test Backend](../../actions/workflows/test-backend.yml/badge.svg)](../../actions/workflows/test-backend.yml)
@@ -6,7 +10,7 @@
 ## Technology Stack and Features
 
 - ⚡ [**FastAPI**](https://fastapi.tiangolo.com) for the Python backend API.
-  - 🧰 [SQLModel](https://sqlmodel.tiangolo.com) for the Python SQL database interactions (ORM).
+  - 🧰 [SQLModel](https://sqlmodel.tiangolo.com) with `AsyncSession` and Psycopg for asynchronous database access.
   - 🔍 [Pydantic](https://docs.pydantic.dev), used by FastAPI, for the data validation and settings management.
   - 💾 [PostgreSQL](https://www.postgresql.org) as the SQL database.
 - 🚀 [React](https://react.dev) for the frontend.
@@ -57,7 +61,37 @@
 
 ## How to Use It
 
-Click the **Use this template** button at the top of this page to create a new repository.
+Click **Use this template** on GitHub to create a repository, or clone the project and start PostgreSQL and Mailpit.
+
+```bash
+git clone https://github.com/eddiethedean/async-full-stack-fastapi-template.git
+cd async-full-stack-fastapi-template
+docker compose up -d db mailpit
+```
+
+Prepare the database and start the backend.
+
+```bash
+cd backend
+uv sync
+uv run bash scripts/prestart.sh
+uv run fastapi dev
+```
+
+In another terminal, start the frontend from the project root.
+
+```bash
+bun install
+bun run dev
+```
+
+Open the frontend at <http://localhost:5173> and API docs at <http://localhost:8000/docs>. See [development.md](./development.md) for configuration and native Windows commands.
+
+## Async Database Access
+
+Each request gets its own SQLModel `AsyncSession`. Database calls are awaited, and password hashing and email sending run in worker threads. Database initialization also uses async sessions. Alembic uses Psycopg's synchronous interface with the same database URL.
+
+The backend tests use HTTPX and AnyIO. CI covers PostgreSQL, Docker Compose, and the frontend flows with Playwright.
 
 ## Backend Development
 
@@ -81,8 +115,8 @@ This includes the local FastAPI and Vite workflow, Docker Compose services, `.en
 
 ## Release Notes
 
-Check the file [release-notes.md](./release-notes.md).
+See [release-notes.md](./release-notes.md), which includes the history inherited from the original template.
 
 ## License
 
-The Full Stack FastAPI Template is licensed under the terms of the MIT license.
+Async Full Stack FastAPI is licensed under the [MIT license](./LICENSE). The original project's copyright notice is included in the license.

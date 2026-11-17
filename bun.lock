@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "fastapi-cloud",
+      "name": "async-full-stack-fastapi-template",
     },
     "frontend": {
       "name": "frontend",
