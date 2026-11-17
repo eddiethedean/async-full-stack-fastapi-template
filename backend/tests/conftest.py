@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -14,12 +15,12 @@ from tests.utils.utils import get_superuser_token_headers
 
 
 @pytest.fixture(scope="session")
-def anyio_backend() -> str:
-    return "asyncio"
+def anyio_backend() -> tuple[str, dict[str, object]]:
+    return "asyncio", {"loop_factory": asyncio.SelectorEventLoop}
 
 
 @pytest.fixture(scope="session", autouse=True)
-async def prepare_db(anyio_backend: str) -> AsyncIterator[None]:  # noqa: ARG001
+async def prepare_db(anyio_backend: object) -> AsyncIterator[None]:  # noqa: ARG001
     async with app.router.lifespan_context(app):
         async with SessionLocal() as session:
             await init_db(session)
