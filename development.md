@@ -52,6 +52,12 @@ bun run build
 
 The build is written to `backend/app/frontend` and served by FastAPI at <http://localhost:8000>. Rebuild the frontend after making frontend changes.
 
+On native Windows, async Psycopg requires a selector event loop. `fastapi dev` uses one with reload enabled. When running the server without reload, pass the loop explicitly from `backend`.
+
+```bash
+uv run uvicorn app.main:app --loop asyncio:SelectorEventLoop
+```
+
 ## Full Stack with Docker Compose
 
 To run the backend and built frontend in Docker Compose:
