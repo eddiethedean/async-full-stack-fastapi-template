@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, func, select
 
+from app import crud
 from app.api.deps import CurrentUser, SessionDep
 from app.models import Item, ItemCreate, ItemPublic, ItemsPublic, ItemUpdate, Message
 
@@ -63,15 +64,13 @@ async def read_item(
 @router.post("/", response_model=ItemPublic)
 async def create_item(
     *, session: SessionDep, current_user: CurrentUser, item_in: ItemCreate
-) -> Any:
+) -> Item:
     """
     Create new item.
     """
-    item = Item.model_validate(item_in, update={"owner_id": current_user.id})
-    session.add(item)
-    await session.commit()
-    await session.refresh(item)
-    return item
+    return await crud.create_item(
+        session=session, item_in=item_in, owner_id=current_user.id
+    )
 
 
 @router.put("/{id}", response_model=ItemPublic)

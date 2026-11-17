@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core import security
 from app.core.config import settings
-from app.core.db import SessionLocal
+from app.core.db import create_session
 from app.models import TokenPayload, User
 
 reusable_oauth2 = OAuth2PasswordBearer(
@@ -19,7 +19,7 @@ reusable_oauth2 = OAuth2PasswordBearer(
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal() as session:
+    async with create_session() as session:
         yield session
 
 

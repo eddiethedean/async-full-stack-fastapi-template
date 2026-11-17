@@ -1,5 +1,4 @@
 import uuid
-from typing import Any
 
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -22,7 +21,7 @@ async def create_user(*, session: AsyncSession, user_create: UserCreate) -> User
 
 async def update_user(
     *, session: AsyncSession, db_user: User, user_in: UserUpdate
-) -> Any:
+) -> User:
     user_data = user_in.model_dump(exclude_unset=True)
     extra_data = {}
     if "password" in user_data:
