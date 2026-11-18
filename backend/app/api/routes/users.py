@@ -28,6 +28,9 @@ from app.models import (
 from app.utils import generate_new_account_email, send_email
 
 router = APIRouter(prefix="/users", tags=["users"])
+email_conflict: dict[int | str, dict[str, Any]] = {
+    409: {"description": "User with this email already exists"}
+}
 
 
 @router.get(
@@ -53,19 +56,15 @@ async def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> An
 
 
 @router.post(
-    "/", dependencies=[Depends(get_current_active_superuser)], response_model=UserPublic
+    "/",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=UserPublic,
+    responses=email_conflict,
 )
 async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
     Create new user.
     """
-    user = await crud.get_user_by_email(session=session, email=user_in.email)
-    if user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system.",
-        )
-
     user = await crud.create_user(session=session, user_create=user_in)
     if settings.emails_enabled and user_in.email:
         email_data = await run_in_threadpool(
@@ -83,7 +82,7 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     return user
 
 
-@router.patch("/me", response_model=UserPublic)
+@router.patch("/me", response_model=UserPublic, responses=email_conflict)
 async def update_user_me(
     *, session: SessionDep, user_in: UserUpdateMe, current_user: CurrentUser
 ) -> Any:
@@ -91,20 +90,9 @@ async def update_user_me(
     Update own user.
     """
 
-    if user_in.email:
-        existing_user = await crud.get_user_by_email(
-            session=session, email=user_in.email
-        )
-        if existing_user and existing_user.id != current_user.id:
-            raise HTTPException(
-                status_code=409, detail="User with this email already exists"
-            )
     user_data = user_in.model_dump(exclude_unset=True)
     current_user.sqlmodel_update(user_data)
-    session.add(current_user)
-    await session.commit()
-    await session.refresh(current_user)
-    return current_user
+    return await crud.commit_user(session, current_user)
 
 
 @router.patch("/me/password", response_model=Message)
@@ -152,20 +140,13 @@ async def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
     return Message(message="User deleted successfully")
 
 
-@router.post("/signup", response_model=UserPublic)
+@router.post("/signup", response_model=UserPublic, responses=email_conflict)
 async def register_user(session: SessionDep, user_in: UserRegister) -> Any:
     """
     Create new user without the need to be logged in.
     """
-    user = await crud.get_user_by_email(session=session, email=user_in.email)
-    if user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system",
-        )
     user_create = UserCreate.model_validate(user_in)
-    user = await crud.create_user(session=session, user_create=user_create)
-    return user
+    return await crud.create_user(session=session, user_create=user_create)
 
 
 @router.get("/{user_id}", response_model=UserPublic)
@@ -192,6 +173,7 @@ async def read_user_by_id(
     "/{user_id}",
     dependencies=[Depends(get_current_active_superuser)],
     response_model=UserPublic,
+    responses=email_conflict,
 )
 async def update_user(
     *,
@@ -209,17 +191,7 @@ async def update_user(
             status_code=404,
             detail="The user with this id does not exist in the system",
         )
-    if user_in.email:
-        existing_user = await crud.get_user_by_email(
-            session=session, email=user_in.email
-        )
-        if existing_user and existing_user.id != user_id:
-            raise HTTPException(
-                status_code=409, detail="User with this email already exists"
-            )
-
-    db_user = await crud.update_user(session=session, db_user=db_user, user_in=user_in)
-    return db_user
+    return await crud.update_user(session=session, db_user=db_user, user_in=user_in)
 
 
 @router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])

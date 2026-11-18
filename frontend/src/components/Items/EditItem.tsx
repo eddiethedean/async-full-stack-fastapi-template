@@ -5,7 +5,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import { type ItemPublic, ItemsService } from "@/client"
+import { type ItemPublic, ItemsService, type ItemUpdate } from "@/client"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -49,19 +49,21 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
   const queryClient = useQueryClient()
   const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
+  const defaultValues = {
+    title: item.title,
+    description: item.description ?? "",
+  }
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     mode: "onBlur",
     criteriaMode: "all",
-    defaultValues: {
-      title: item.title,
-      description: item.description ?? undefined,
-    },
+    defaultValues,
   })
+  const { dirtyFields } = form.formState
 
   const mutation = usePrivateMutation({
-    mutationFn: (data: FormData) =>
+    mutationFn: (data: ItemUpdate) =>
       ItemsService.updateItem({ path: { id: item.id }, body: data }),
     onSuccess: () => {
       showSuccessToast("Item updated successfully")
@@ -77,14 +79,20 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
   })
 
   const onSubmit = (data: FormData) => {
-    mutation.mutate(data)
+    const update: ItemUpdate = {}
+    if (dirtyFields.title) update.title = data.title
+    if (dirtyFields.description) update.description = data.description || null
+    mutation.mutate(update)
   }
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          form.reset(defaultValues)
+          setIsOpen(true)
+        }}
       >
         <Pencil />
         Edit Item

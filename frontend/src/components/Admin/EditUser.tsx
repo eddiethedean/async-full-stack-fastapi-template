@@ -5,7 +5,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import { type UserPublic, UsersService } from "@/client"
+import { type UserPublic, UsersService, type UserUpdate } from "@/client"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -63,21 +63,25 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
   const queryClient = useQueryClient()
   const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
+  const defaultValues = {
+    email: user.email,
+    full_name: user.full_name ?? "",
+    is_superuser: user.is_superuser,
+    is_active: user.is_active,
+    password: "",
+    confirm_password: "",
+  }
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     mode: "onBlur",
     criteriaMode: "all",
-    defaultValues: {
-      email: user.email,
-      full_name: user.full_name ?? undefined,
-      is_superuser: user.is_superuser,
-      is_active: user.is_active,
-    },
+    defaultValues,
   })
+  const { dirtyFields } = form.formState
 
   const mutation = usePrivateMutation({
-    mutationFn: (data: FormData) =>
+    mutationFn: (data: UserUpdate) =>
       UsersService.updateUser({ path: { user_id: user.id }, body: data }),
     onSuccess: () => {
       showSuccessToast("User updated successfully")
@@ -93,19 +97,23 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
   })
 
   const onSubmit = (data: FormData) => {
-    // exclude confirm_password from submission data and remove password if empty
-    const { confirm_password: _, ...submitData } = data
-    if (!submitData.password) {
-      delete submitData.password
-    }
-    mutation.mutate(submitData)
+    const update: UserUpdate = {}
+    if (dirtyFields.email) update.email = data.email
+    if (dirtyFields.full_name) update.full_name = data.full_name || null
+    if (dirtyFields.is_active) update.is_active = data.is_active
+    if (dirtyFields.is_superuser) update.is_superuser = data.is_superuser
+    if (data.password) update.password = data.password
+    mutation.mutate(update)
   }
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          form.reset(defaultValues)
+          setIsOpen(true)
+        }}
       >
         <Pencil />
         Edit User

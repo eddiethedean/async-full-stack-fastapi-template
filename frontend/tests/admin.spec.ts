@@ -89,7 +89,7 @@ test.describe("Admin user management", () => {
     await expect(userRow.getByText("Superuser")).toBeVisible()
   })
 
-  test("Edit a user successfully", async ({ page }) => {
+  test("Edit a user after cancelling a draft", async ({ page }) => {
     await page.goto("/admin")
 
     const email = randomEmail()
@@ -108,12 +108,20 @@ test.describe("Admin user management", () => {
     await expect(page.getByRole("dialog")).not.toBeVisible()
 
     const userRow = page.getByRole("row").filter({ hasText: email })
+    const editUser = page.getByRole("menuitem", { name: "Edit User" })
+    const dialog = page.getByRole("dialog")
     await userRow.getByRole("button").click()
+    await editUser.click()
+    await dialog.getByLabel("Full Name").fill("Discarded name")
+    await dialog.getByLabel("Set Password").fill(randomPassword())
+    await dialog.getByRole("button", { name: "Cancel" }).click()
+    await expect(dialog).not.toBeVisible()
 
-    await page.getByRole("menuitem", { name: "Edit User" }).click()
-
-    await page.getByPlaceholder("Full name").fill(updatedName)
-    await page.getByRole("button", { name: "Save" }).click()
+    await editUser.click()
+    await expect(dialog.getByLabel("Full Name")).toHaveValue(originalName)
+    await expect(dialog.getByLabel("Set Password")).toHaveValue("")
+    await dialog.getByLabel("Full Name").fill(updatedName)
+    await dialog.getByRole("button", { name: "Save" }).click()
 
     await expect(page.getByText("User updated successfully")).toBeVisible()
     await expect(page.getByText(updatedName)).toBeVisible()

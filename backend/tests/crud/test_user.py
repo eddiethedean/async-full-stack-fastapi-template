@@ -1,11 +1,14 @@
+from uuid import uuid4
+
 import pytest
 from fastapi.encoders import jsonable_encoder
 from pwdlib.hashers.bcrypt import BcryptHasher
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.security import verify_password
-from app.models import User, UserCreate, UserUpdate
+from app.models import Item, User, UserCreate, UserUpdate
 from tests.utils.utils import random_email, random_lower_string
 
 pytestmark = pytest.mark.anyio
@@ -18,6 +21,29 @@ async def test_create_user(db: AsyncSession) -> None:
     user = await crud.create_user(session=db, user_create=user_in)
     assert user.email == email
     assert hasattr(user, "hashed_password")
+
+
+async def test_expected_user_conflict_rolls_back_session(db: AsyncSession) -> None:
+    user_in = UserCreate(email=random_email(), password=random_lower_string())
+    user = await crud.create_user(session=db, user_create=user_in)
+    user_id = user.id
+
+    with pytest.raises(crud.DuplicateEmailError):
+        await crud.create_user(session=db, user_create=user_in)
+
+    assert await db.get(User, user_id) is not None
+
+
+async def test_other_integrity_errors_are_not_email_conflicts(db: AsyncSession) -> None:
+    user_in = UserCreate(email=random_email(), password=random_lower_string())
+    user = await crud.create_user(session=db, user_create=user_in)
+    user_id = user.id
+    db.add(Item(title="Invalid owner", owner_id=uuid4()))
+
+    with pytest.raises(IntegrityError):
+        await crud.commit_user(db, user)
+
+    assert await db.get(User, user_id) is not None
 
 
 async def test_authenticate_user(db: AsyncSession) -> None:

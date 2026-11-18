@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from unittest.mock import patch
 
@@ -168,8 +169,8 @@ async def test_create_user_existing_username(
         json=data,
     )
     created_user = r.json()
-    assert r.status_code == 400
-    assert "_id" not in created_user
+    assert r.status_code == 409
+    assert created_user["detail"] == "User with this email already exists"
 
 
 async def test_create_user_by_normal_user(
@@ -363,8 +364,62 @@ async def test_register_user_already_exists_error(client: AsyncClient) -> None:
         f"{settings.API_V1_STR}/users/signup",
         json=data,
     )
-    assert r.status_code == 400
-    assert r.json()["detail"] == "The user with this email already exists in the system"
+    assert r.status_code == 409
+    assert r.json()["detail"] == "User with this email already exists"
+
+
+async def test_concurrent_signups_for_same_email(client: AsyncClient) -> None:
+    url = f"{settings.API_V1_STR}/users/signup"
+    payload = {"email": random_email(), "password": random_lower_string()}
+    results = await asyncio.gather(*(client.post(url, json=payload) for _ in range(2)))
+
+    assert sorted(result.status_code for result in results) == [200, 409]
+
+
+async def test_concurrent_updates_to_same_email(
+    client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
+) -> None:
+    users = [await create_random_user(db), await create_random_user(db)]
+    payload = {"email": random_email()}
+    results = await asyncio.gather(
+        *(
+            client.patch(
+                f"{settings.API_V1_STR}/users/{user.id}",
+                json=payload,
+                headers=superuser_token_headers,
+            )
+            for user in users
+        )
+    )
+
+    assert sorted(result.status_code for result in results) == [200, 409]
+
+
+async def test_partial_user_update_validation(
+    client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
+) -> None:
+    user = await crud.create_user(
+        session=db,
+        user_create=UserCreate(
+            email=random_email(), password=random_lower_string(), full_name="Name"
+        ),
+    )
+    url = f"{settings.API_V1_STR}/users/{user.id}"
+    for field in ("email", "password", "is_active", "is_superuser"):
+        response = await client.patch(
+            url, json={field: None}, headers=superuser_token_headers
+        )
+        assert response.status_code == 422
+
+    response = await client.patch(
+        url,
+        json={"full_name": None, "is_active": False},
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["email"] == user.email
+    assert response.json()["full_name"] is None
+    assert response.json()["is_active"] is False
 
 
 async def test_update_user(

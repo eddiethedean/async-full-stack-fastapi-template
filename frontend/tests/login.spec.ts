@@ -176,7 +176,7 @@ for (const switchInAnotherTab of [false, true]) {
       const signInPage = switchInAnotherTab ? await context.newPage() : page
       if (switchInAnotherTab) await signInPage.goto("/")
       await signInPage.getByTestId("user-menu").click()
-      await signInPage.getByRole("menuitem", { name: "Log out" }).click()
+      await signInPage.getByRole("menuitem", { name: "Log out" }).press("Enter")
       await expect(signInPage).toHaveURL("/login")
       await fillForm(signInPage, second, password)
       await signInPage.getByRole("button", { name: "Log In" }).click()

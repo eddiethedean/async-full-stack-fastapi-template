@@ -129,6 +129,30 @@ async def test_update_item_not_found(
     assert content["detail"] == "Item not found"
 
 
+async def test_update_item_distinguishes_omission_from_null(
+    client: AsyncClient, superuser_token_headers: dict[str, str]
+) -> None:
+    headers = superuser_token_headers
+    created = await client.post(
+        f"{settings.API_V1_STR}/items/",
+        headers=headers,
+        json={"title": "Original title", "description": "Original description"},
+    )
+    assert created.status_code == 200
+    url = f"{settings.API_V1_STR}/items/{created.json()['id']}"
+
+    unchanged = await client.put(url, headers=headers, json={})
+    assert unchanged.json() == created.json()
+
+    invalid = await client.put(url, headers=headers, json={"title": None})
+    assert invalid.status_code == 422
+
+    cleared = await client.put(url, headers=headers, json={"description": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["title"] == "Original title"
+    assert cleared.json()["description"] is None
+
+
 async def test_update_item_not_enough_permissions(
     client: AsyncClient, normal_user_token_headers: dict[str, str], db: AsyncSession
 ) -> None:

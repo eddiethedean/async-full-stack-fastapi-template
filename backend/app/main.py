@@ -3,13 +3,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
 from app.core.db import engine
+from app.crud import DuplicateEmailError
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 
@@ -35,6 +37,16 @@ app = FastAPI(
     generate_unique_id_function=custom_generate_unique_id,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(DuplicateEmailError)
+async def handle_duplicate_email(
+    _request: Request, _error: DuplicateEmailError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409, content={"detail": "User with this email already exists"}
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
