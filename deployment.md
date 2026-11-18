@@ -133,3 +133,37 @@ the ingress strips untrusted forwarded headers. The API uses the client
 address the server resolved. With direct internet traffic, leave forwarded
 address trust disabled for remote peers. The
 `auth.rate_limit.requests` metric reports decisions by action and outcome.
+
+## Health and resource limits
+
+Use `/api/v1/utils/health-check/` for process liveness and
+`/api/v1/utils/readiness/` to gate traffic on PostgreSQL availability. The
+database readiness timeout defaults to one second. Configure
+`DB_READINESS_TIMEOUT_SECONDS` if the ingress or database requires a different
+budget. The request body limit defaults to 256 KiB through
+`MAX_REQUEST_BODY_BYTES`. Set an explicit route-level limit if adding an upload
+endpoint that accepts larger bodies.
+
+The connection allowance for API processes is
+`WEB_CONCURRENCY × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` per replica. The default
+four workers can use up to 28 connections between them. Budget for the worker,
+migration, and diagnostics separately. With default settings the mail worker
+sends one message at a time. Use `DB_POOL_TIMEOUT_SECONDS` to bound pool wait.
+The request dependency caps competing database sessions per API worker and
+releases its session before sending ordinary JSON responses.
+
+Application logs contain a request ID, route pattern, duration, and status.
+When Sentry is configured, the API strips request data, exception messages, and
+span descriptions before sending error and trace events. Align access logging
+with that policy at external ingress. FastAPI can also export native
+OpenTelemetry metrics through the standard OTLP environment variables and
+`FASTAPI_OTEL_AUTO_CONFIGURE=true`. Opt in only after deciding which tool should
+export each signal to avoid duplicate tracing.
+
+Check `python -m app.email_worker --healthcheck` for a recent successful worker
+poll. Worker logs include queue depth and the age of the oldest pending
+message. A worker restart reclaims expired leases without re-creating accounts
+or action tokens. Every five minutes an API worker prunes a bounded batch of
+expired authentication records, limit buckets, and email payloads. Terminal
+email records and revoked sessions are retained up to seven days after that
+batch catches up.

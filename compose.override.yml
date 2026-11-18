@@ -35,6 +35,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: development
     # command: sleep infinity  # Infinite loop to keep container alive doing nothing
     command:
       - fastapi
@@ -69,6 +70,8 @@ services:
       SMTP_TLS: "false"
 
   email-worker:
+    build:
+      target: development
     environment:
       FASTAPI_ENV: "development"
       SMTP_HOST: "mailpit"

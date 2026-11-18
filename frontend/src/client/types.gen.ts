@@ -979,6 +979,22 @@ export type utilsHealthCheckResponses = {
 
 export type utilsHealthCheckResponse = utilsHealthCheckResponses[keyof utilsHealthCheckResponses];
 
+export type utilsReadinessData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/utils/readiness/';
+};
+
+export type utilsReadinessResponses = {
+    /**
+     * Successful Response
+     */
+    200: Message;
+};
+
+export type utilsReadinessResponse = utilsReadinessResponses[keyof utilsReadinessResponses];
+
 export type itemsReadItemsData = {
     body?: never;
     path?: never;

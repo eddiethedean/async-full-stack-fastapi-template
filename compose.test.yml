@@ -10,6 +10,8 @@ services:
       - "127.0.0.1::5432"
 
   backend:
+    build:
+      target: development
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
@@ -26,6 +28,8 @@ services:
       SMTP_PASSWORD: ""
 
   email-worker:
+    build:
+      target: development
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite

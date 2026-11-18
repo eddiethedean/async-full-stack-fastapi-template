@@ -16,6 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     env:
+      FORWARDED_ALLOW_IPS: ${{ vars.FORWARDED_ALLOW_IPS }}
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
@@ -36,7 +37,9 @@ jobs:
           persist-credentials: false
       - name: Build
         run: docker compose -f compose.yml -f compose.deploy.yml build
-      - name: Prepare database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
+      - name: Start database
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait db
+      - name: Migrate and initialize database
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps backend bash scripts/prestart.sh
       - name: Start application
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait

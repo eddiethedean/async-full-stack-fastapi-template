@@ -5,7 +5,14 @@ from app import crud
 from app.core.config import settings
 from app.models import UserCreate
 
-engine = create_async_engine(str(settings.DATABASE_URL), pool_pre_ping=True)
+engine = create_async_engine(
+    str(settings.DATABASE_URL),
+    pool_pre_ping=True,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
+    hide_parameters=True,
+)
 
 
 def create_session() -> AsyncSession:

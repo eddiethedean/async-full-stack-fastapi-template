@@ -1,7 +1,10 @@
+import argparse
 import asyncio
 import logging
 import signal
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from smtplib import SMTPRecipientsRefused, SMTPResponseException
 
 from cryptography.fernet import InvalidToken
@@ -16,6 +19,7 @@ from app.email_outbox import (
     claim_email,
     complete_email,
     get_cipher,
+    queue_stats,
 )
 from app.utils import (
     generate_invitation_email,
@@ -25,6 +29,17 @@ from app.utils import (
 )
 
 logger = logging.getLogger(__name__)
+HEARTBEAT = Path("/tmp/asf-email-worker-heartbeat")
+HEARTBEAT_MAX_AGE_SECONDS = 150
+
+
+def healthy() -> bool:
+    if not settings.emails_enabled:
+        return True
+    try:
+        return time.time() - HEARTBEAT.stat().st_mtime < HEARTBEAT_MAX_AGE_SECONDS
+    except FileNotFoundError:
+        return False
 
 
 def deliver_email(claimed: ClaimedEmail) -> None:
@@ -90,18 +105,39 @@ async def process_next_email() -> bool:
 
 
 async def worker() -> None:
-    if not settings.emails_enabled:
-        logger.info("email_outbox disabled")
-        return
-    get_cipher(active_key())
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
+    HEARTBEAT.unlink(missing_ok=True)
+
+    def signal_stop(_signal: int, _frame: object) -> None:
+        loop.call_soon_threadsafe(stop.set)
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+        signal.signal(sig, signal_stop)
+    next_report = 0.0
     try:
+        if not settings.emails_enabled:
+            logger.info("email_outbox disabled")
+            await stop.wait()
+            return
+        get_cipher(active_key())
         while not stop.is_set():
             try:
-                if await process_next_email():
+                had_work = await process_next_email()
+                HEARTBEAT.touch()
+                if loop.time() >= next_report:
+                    async with create_session() as session:
+                        depth, oldest = await queue_stats(session)
+                    age = (
+                        max(0.0, (datetime.now(UTC) - oldest).total_seconds())
+                        if oldest
+                        else 0.0
+                    )
+                    logger.info(
+                        "email_outbox pending=%d oldest_seconds=%.0f", depth, age
+                    )
+                    next_report = loop.time() + 60
+                if had_work:
                     continue
             except SQLAlchemyError:
                 logger.warning("email_outbox datastore_unavailable")
@@ -110,9 +146,14 @@ async def worker() -> None:
             except TimeoutError:
                 pass
     finally:
+        HEARTBEAT.unlink(missing_ok=True)
         await engine.dispose()
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process queued account emails")
+    parser.add_argument("--healthcheck", action="store_true")
+    if parser.parse_args().healthcheck:
+        raise SystemExit(0 if healthy() else 1)
     logging.basicConfig(level=logging.INFO)
     asyncio.run(worker(), loop_factory=asyncio.SelectorEventLoop)
