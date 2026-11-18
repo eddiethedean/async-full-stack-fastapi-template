@@ -5,7 +5,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import { type ItemPublic, ItemsService } from "@/client"
+import { type ItemPublic, ItemsService, type ItemUpdate } from "@/client"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -56,14 +56,19 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
     criteriaMode: "all",
     defaultValues: {
       title: item.title,
-      description: item.description ?? undefined,
+      description: item.description ?? "",
     },
   })
+  const { dirtyFields } = form.formState
 
   const mutation = usePrivateMutation({
-    mutationFn: (data: FormData) =>
+    mutationFn: (data: ItemUpdate) =>
       ItemsService.updateItem({ path: { id: item.id }, body: data }),
-    onSuccess: () => {
+    onSuccess: ({ data: updated }) => {
+      form.reset({
+        title: updated.title,
+        description: updated.description ?? "",
+      })
       showSuccessToast("Item updated successfully")
       setIsOpen(false)
       onSuccess()
@@ -77,7 +82,10 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
   })
 
   const onSubmit = (data: FormData) => {
-    mutation.mutate(data)
+    const update: ItemUpdate = {}
+    if (dirtyFields.title) update.title = data.title
+    if (dirtyFields.description) update.description = data.description || null
+    mutation.mutate(update)
   }
 
   return (

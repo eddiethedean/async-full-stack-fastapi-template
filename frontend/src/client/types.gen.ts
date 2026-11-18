@@ -91,7 +91,7 @@ export type ItemUpdate = {
     /**
      * Title
      */
-    title?: string | null;
+    title?: string;
     /**
      * Description
      */
@@ -245,15 +245,15 @@ export type UserUpdate = {
     /**
      * Email
      */
-    email?: string | null;
+    email?: string;
     /**
      * Is Active
      */
-    is_active?: boolean | null;
+    is_active?: boolean;
     /**
      * Is Superuser
      */
-    is_superuser?: boolean | null;
+    is_superuser?: boolean;
     /**
      * Full Name
      */
@@ -261,7 +261,7 @@ export type UserUpdate = {
     /**
      * Password
      */
-    password?: string | null;
+    password?: string;
 };
 
 /**
@@ -275,7 +275,7 @@ export type UserUpdateMe = {
     /**
      * Email
      */
-    email?: string | null;
+    email?: string;
 };
 
 /**
@@ -489,6 +489,10 @@ export type usersCreateUserData = {
 
 export type usersCreateUserErrors = {
     /**
+     * User with this email already exists
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
@@ -546,6 +550,10 @@ export type usersUpdateUserMeData = {
 
 export type usersUpdateUserMeErrors = {
     /**
+     * User with this email already exists
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
@@ -595,6 +603,10 @@ export type usersRegisterUserData = {
 };
 
 export type usersRegisterUserErrors = {
+    /**
+     * User with this email already exists
+     */
+    409: unknown;
     /**
      * Validation Error
      */
@@ -685,6 +697,10 @@ export type usersUpdateUserData = {
 };
 
 export type usersUpdateUserErrors = {
+    /**
+     * User with this email already exists
+     */
+    409: unknown;
     /**
      * Validation Error
      */

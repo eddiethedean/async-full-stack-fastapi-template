@@ -42,10 +42,11 @@ const UserInformation = () => {
     mode: "onBlur",
     criteriaMode: "all",
     defaultValues: {
-      full_name: currentUser?.full_name ?? undefined,
+      full_name: currentUser?.full_name ?? "",
       email: currentUser?.email,
     },
   })
+  const { dirtyFields } = form.formState
 
   const toggleEditMode = () => {
     setEditMode(!editMode)
@@ -54,7 +55,8 @@ const UserInformation = () => {
   const mutation = usePrivateMutation({
     mutationFn: (data: UserUpdateMe) =>
       UsersService.updateUserMe({ body: data }),
-    onSuccess: () => {
+    onSuccess: ({ data: updated }) => {
+      form.reset({ full_name: updated.full_name ?? "", email: updated.email })
       showSuccessToast("User updated successfully")
       toggleEditMode()
     },
@@ -73,10 +75,10 @@ const UserInformation = () => {
     const updateData: UserUpdateMe = {}
 
     // only include fields that have changed
-    if (data.full_name !== currentUser?.full_name) {
-      updateData.full_name = data.full_name
+    if (dirtyFields.full_name) {
+      updateData.full_name = data.full_name || null
     }
-    if (data.email !== currentUser?.email) {
+    if (dirtyFields.email) {
       updateData.email = data.email
     }
 

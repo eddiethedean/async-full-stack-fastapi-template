@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from pydantic import EmailStr, StrictInt
+from pydantic import MISSING, EmailStr, StrictInt
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -30,16 +30,16 @@ class UserRegister(SQLModel):
 
 # Properties to receive via API on update, all are optional
 class UserUpdate(SQLModel):
-    email: EmailStr | None = Field(default=None, max_length=255)
-    is_active: bool | None = None
-    is_superuser: bool | None = None
-    full_name: str | None = Field(default=None, max_length=255)
-    password: str | None = Field(default=None, min_length=8, max_length=128)
+    email: EmailStr | MISSING = Field(default=MISSING, max_length=255)
+    is_active: bool | MISSING = MISSING
+    is_superuser: bool | MISSING = MISSING
+    full_name: str | None | MISSING = Field(default=MISSING, max_length=255)
+    password: str | MISSING = Field(default=MISSING, min_length=8, max_length=128)
 
 
 class UserUpdateMe(SQLModel):
-    full_name: str | None = Field(default=None, max_length=255)
-    email: EmailStr | None = Field(default=None, max_length=255)
+    full_name: str | None | MISSING = Field(default=MISSING, max_length=255)
+    email: EmailStr | MISSING = Field(default=MISSING, max_length=255)
 
 
 class UpdatePassword(SQLModel):
@@ -79,8 +79,8 @@ class ItemCreate(ItemBase):
 
 # Properties to receive on item update
 class ItemUpdate(SQLModel):
-    title: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=255)
+    title: str | MISSING = Field(default=MISSING, min_length=1, max_length=255)
+    description: str | None | MISSING = Field(default=MISSING, max_length=255)
 
 
 # Database model, database table inferred from class name
