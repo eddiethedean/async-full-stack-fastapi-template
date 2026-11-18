@@ -1,12 +1,13 @@
 """Choose a disposable database before loading any application settings."""
 
 import os
-import re
 import subprocess
 from pathlib import Path
 
 from pydantic import PostgresDsn, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.database_url import postgres_database_name, require_test_database
 
 
 class ApplicationDatabase(BaseSettings):
@@ -31,9 +32,8 @@ def test_database_url() -> str:
             "Check TEST_DATABASE_URL and DATABASE_URL configuration."
         ) from None
 
-    if not re.fullmatch(r"/asf_test_[a-z0-9_]+", database.path or ""):
-        raise ValueError("The test database name must start with asf_test_.")
-    if app_database and database.path == app_database.path:
+    test_name = require_test_database(database)
+    if app_database and test_name == postgres_database_name(app_database):
         raise ValueError("The test database must differ from the application database.")
     return url
 

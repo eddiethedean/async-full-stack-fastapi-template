@@ -43,8 +43,7 @@ const useAuth = () => {
     mutationFn: (data: AccessToken) =>
       LoginService.loginAccessToken({ body: data }),
     onSuccess: ({ data }) => {
-      if (generation === getSession().generation) {
-        replaceAccessToken(data.access_token)
+      if (replaceAccessToken(data.access_token, generation)) {
         void navigate({ to: "/" })
       }
     },
@@ -52,8 +51,7 @@ const useAuth = () => {
   })
 
   const logout = () => {
-    if (generation === getSession().generation) {
-      replaceAccessToken(null)
+    if (replaceAccessToken(null, generation)) {
       void navigate({ to: "/login", replace: true })
     }
   }

@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react"
 
 import { UsersService } from "@/client"
 
-const accessTokenKey = "access_token"
+export const accessTokenKey = "access_token"
 let session = {
   accessToken: localStorage.getItem(accessTokenKey),
   generation: 0,
@@ -21,8 +21,32 @@ function subscribe(listener: () => void) {
 
 export const useSession = () => useSyncExternalStore(subscribe, getSession)
 
-export function replaceAccessToken(accessToken: string | null) {
-  if (accessToken === session.accessToken) return
+function setSession(accessToken: string | null) {
+  if (accessToken === session.accessToken) return false
+
+  session = { accessToken, generation: session.generation + 1 }
+  void queryClient.cancelQueries()
+  queryClient.clear()
+  for (const listener of listeners) listener()
+  return true
+}
+
+export function syncSessionFromStorage() {
+  return setSession(localStorage.getItem(accessTokenKey))
+}
+
+export function replaceAccessToken(
+  accessToken: string | null,
+  generation: number,
+) {
+  // Another tab can update storage before this tab receives its notification.
+  if (
+    generation !== session.generation ||
+    session.accessToken !== localStorage.getItem(accessTokenKey)
+  ) {
+    return false
+  }
+  if (accessToken === session.accessToken) return true
 
   if (accessToken === null) {
     localStorage.removeItem(accessTokenKey)
@@ -30,10 +54,8 @@ export function replaceAccessToken(accessToken: string | null) {
     localStorage.setItem(accessTokenKey, accessToken)
   }
 
-  session = { accessToken, generation: session.generation + 1 }
-  void queryClient.cancelQueries()
-  queryClient.clear()
-  for (const listener of listeners) listener()
+  setSession(accessToken)
+  return true
 }
 
 export const privateQueryKey = (generation: number, resource?: string) =>
