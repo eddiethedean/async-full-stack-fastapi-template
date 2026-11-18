@@ -1,0 +1,50 @@
+# Use explicitly with compose.yml so the development override stays out.
+services:
+  db:
+    environment:
+      POSTGRES_DB: asf_test_suite
+      POSTGRES_PASSWORD: test-only-postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "asf_test_suite"]
+    ports:
+      - "127.0.0.1::5432"
+
+  backend:
+    image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
+      FASTAPI_ENV: development
+      ENABLE_TEST_ROUTES: "true"
+      SENTRY_DSN: ""
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+      SMTP_SSL: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "127.0.0.1::1025"
+
+  playwright:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.playwright
+    ipc: host
+    depends_on:
+      backend:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      PLAYWRIGHT_BASE_URL: http://backend:8000
+      VITE_API_URL: http://backend:8000
+      MAILPIT_HOST: http://mailpit:8025
+      CI: ${CI:-}
+    volumes:
+      - ./frontend/blob-report:/app/frontend/blob-report
+      - ./frontend/test-results:/app/frontend/test-results

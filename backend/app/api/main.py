@@ -10,5 +10,5 @@ api_router.include_router(utils.router)
 api_router.include_router(items.router)
 
 
-if settings.FASTAPI_ENV == "development":
-    api_router.include_router(private.router)
+if settings.ENABLE_TEST_ROUTES:
+    api_router.include_router(private.router, include_in_schema=False)
