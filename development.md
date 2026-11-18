@@ -101,19 +101,17 @@ migrations and initializes test data. Direct `pytest` requires the database to
 be migrated first. Use a fresh test database for each run and remove it when
 finished.
 
-For browser tests, select the isolated Compose files and a unique project name:
+For browser tests, run one of these commands from the repository root:
 
 ```bash
-export COMPOSE_PROJECT_NAME=asf-browser-local
-export COMPOSE_FILE=compose.yml:compose.test.yml
-docker compose build
-docker compose run --rm backend bash scripts/prestart.sh
-docker compose run --rm playwright bunx playwright test
-docker compose down --volumes --remove-orphans
+bun run test
+bun run test:ui
 ```
 
-The browser test setup routes require an explicit development test setting and
-are excluded from the public client.
+Both commands start a disposable Compose project and remove its volumes on
+exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
+running tests that require sign-in. Playwright verifies test mode before signing
+in. The browser test setup routes are excluded from the public client.
 
 ## Docker Compose Files and Environment Variables
 

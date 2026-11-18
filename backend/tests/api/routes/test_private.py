@@ -9,6 +9,16 @@ from app.models import User
 pytestmark = pytest.mark.anyio
 
 
+async def test_test_mode_is_excluded_from_openapi(client: AsyncClient) -> None:
+    path = f"{settings.API_V1_STR}/private/test-mode"
+    response = await client.get(path)
+    assert response.status_code == 200
+    assert response.json() == {"test_mode": True}
+
+    schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
+    assert path not in schema.json()["paths"]
+
+
 async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
     r = await client.post(
         f"{settings.API_V1_STR}/private/users/",
