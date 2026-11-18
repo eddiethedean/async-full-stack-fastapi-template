@@ -174,9 +174,14 @@ for (const switchInAnotherTab of [false, true]) {
       await pendingRequest
 
       const signInPage = switchInAnotherTab ? await context.newPage() : page
-      if (switchInAnotherTab) await signInPage.goto("/")
+      if (switchInAnotherTab) {
+        await signInPage.goto("/")
+      } else {
+        await signInPage.getByRole("link", { name: "Dashboard" }).click()
+      }
+      await expect(signInPage.getByTestId("user-menu")).toContainText(first)
       await signInPage.getByTestId("user-menu").click()
-      await signInPage.getByRole("menuitem", { name: "Log out" }).press("Enter")
+      await signInPage.getByRole("menuitem", { name: "Log out" }).click()
       await expect(signInPage).toHaveURL("/login")
       await fillForm(signInPage, second, password)
       await signInPage.getByRole("button", { name: "Log In" }).click()
@@ -196,7 +201,7 @@ for (const switchInAnotherTab of [false, true]) {
       await page.getByRole("link", { name: "Items" }).click()
       await expect(page.getByText("You don't have any items yet")).toBeVisible()
       await expect(page.getByText(title)).toHaveCount(0)
-      await expect(page).toHaveURL("/items")
+      await expect(page).toHaveURL((url) => url.pathname === "/items")
     } finally {
       releaseResponse()
     }

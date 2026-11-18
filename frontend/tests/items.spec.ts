@@ -10,7 +10,9 @@ import { logInUser } from "./utils/user"
 
 test("Items page is accessible and shows correct title", async ({ page }) => {
   await page.goto("/items")
-  await expect(page.getByRole("heading", { name: "Items" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Items", exact: true }),
+  ).toBeVisible()
   await expect(page.getByText("Create and manage your items")).toBeVisible()
 })
 
@@ -140,5 +142,78 @@ test.describe("Items empty state", () => {
 
     await expect(page.getByText("You don't have any items yet")).toBeVisible()
     await expect(page.getByText("Add a new item to get started")).toBeVisible()
+  })
+})
+
+test.describe("Server pagination on mobile", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    storageState: { cookies: [], origins: [] },
+  })
+
+  test("Rows beyond the first 100 survive navigation and the last page recovers after deletion", async ({
+    page,
+  }) => {
+    const email = randomEmail()
+    const password = randomPassword()
+    await createUser({ email, password })
+
+    const response = await page.request.post("/api/v1/login/access-token", {
+      form: { username: email, password },
+    })
+    expect(response.ok()).toBe(true)
+    const { access_token } = await response.json()
+    const headers = { Authorization: `Bearer ${access_token}` }
+    const title = randomItemTitle()
+    const createItem = async (title: string) => {
+      const item = await page.request.post("/api/v1/items/", {
+        data: { title },
+        headers,
+      })
+      expect(item.ok()).toBe(true)
+    }
+    await createItem(title)
+    for (let batch = 0; batch < 10; batch++) {
+      await Promise.all(
+        Array.from({ length: 10 }, (_, row) =>
+          createItem(`Item ${batch * 10 + row + 1}`),
+        ),
+      )
+    }
+
+    await logInUser(page, email, password)
+    await page.goto("/items?page=10&pageSize=10")
+    await page.getByRole("button", { name: "Go to next page" }).click()
+    await expect(page.getByText(title)).toBeVisible()
+    await expect(
+      page.getByText("Showing 101 to 101 of 101 entries"),
+    ).toBeVisible()
+
+    await page.reload()
+    await expect(page.getByText(title)).toBeVisible()
+    await page.goBack()
+    await expect(
+      page.getByText("Showing 91 to 100 of 101 entries"),
+    ).toBeVisible()
+
+    await page.getByRole("combobox", { name: "Rows per page" }).click()
+    await page.getByRole("option", { name: "100", exact: true }).click()
+    await expect(
+      page.getByText("Showing 1 to 100 of 101 entries"),
+    ).toBeVisible()
+    await page.getByRole("button", { name: "Go to last page" }).click()
+
+    await page
+      .getByRole("row")
+      .filter({ hasText: title })
+      .getByRole("button")
+      .last()
+      .click()
+    await page.getByRole("menuitem", { name: "Delete Item" }).click()
+    await page.getByRole("button", { name: "Delete", exact: true }).click()
+    await expect(
+      page.getByText("Showing 1 to 100 of 100 entries"),
+    ).toBeVisible()
+    await expect(page).toHaveURL(/page=1(?:&|$)/)
   })
 })
