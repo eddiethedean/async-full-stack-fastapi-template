@@ -17,6 +17,17 @@ from tests.utils.utils import random_email, random_lower_string
 pytestmark = pytest.mark.anyio
 
 
+async def test_users_pagination_bounds(
+    client: AsyncClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = await client.get(
+        f"{settings.API_V1_STR}/users/",
+        headers=superuser_token_headers,
+        params={"limit": 101},
+    )
+    assert response.status_code == 422
+
+
 async def test_get_users_superuser_me(
     client: AsyncClient, superuser_token_headers: dict[str, str]
 ) -> None:

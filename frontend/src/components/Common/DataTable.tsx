@@ -1,7 +1,8 @@
 import {
   type ColumnDef,
-  createPaginatedRowModel,
   flexRender,
+  functionalUpdate,
+  type PaginationState,
   type RowData,
   rowPaginationFeature,
   tableFeatures,
@@ -13,6 +14,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react"
+import { useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -30,27 +32,56 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { pageSizes } from "@/lib/pagination"
 
 const dataTableFeatures = tableFeatures({
   rowPaginationFeature,
-  paginatedRowModel: createPaginatedRowModel(),
 })
 
 export type DataTableFeatures = typeof dataTableFeatures
 
-interface DataTableProps<TData extends RowData> {
+interface DataTableProps<TData extends RowData & { id: string }> {
   columns: ColumnDef<DataTableFeatures, TData>[]
   data: TData[]
+  rowCount: number
+  pagination: PaginationState
+  onPaginationChange: (next: PaginationState, replace?: boolean) => void
+  loading: boolean
+  refreshing: boolean
 }
 
-export function DataTable<TData extends RowData>({
+export function DataTable<TData extends RowData & { id: string }>({
   columns,
   data,
+  rowCount,
+  pagination,
+  onPaginationChange,
+  loading,
+  refreshing,
 }: DataTableProps<TData>) {
+  const { pageIndex, pageSize } = pagination
+  const lastPageIndex = Math.max(0, Math.ceil(rowCount / pageSize) - 1)
+  useEffect(() => {
+    if (!refreshing && pageIndex > lastPageIndex) {
+      onPaginationChange({ pageIndex: lastPageIndex, pageSize }, true)
+    }
+  }, [lastPageIndex, onPaginationChange, pageIndex, pageSize, refreshing])
+
   const table = useTable({
     features: dataTableFeatures,
     data,
     columns,
+    getRowId: (row) => row.id,
+    manualPagination: true,
+    rowCount,
+    state: { pagination },
+    onPaginationChange: (update) => {
+      const next = functionalUpdate(update, pagination)
+      onPaginationChange({
+        ...next,
+        pageIndex: next.pageSize === pageSize ? next.pageIndex : 0,
+      })
+    },
   })
 
   return (
@@ -74,7 +105,7 @@ export function DataTable<TData extends RowData>({
             </TableRow>
           ))}
         </TableHeader>
-        <TableBody>
+        <TableBody aria-busy={loading}>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
               <TableRow key={row.id}>
@@ -91,30 +122,20 @@ export function DataTable<TData extends RowData>({
                 colSpan={columns.length}
                 className="h-32 text-center text-muted-foreground"
               >
-                No results found.
+                {loading ? "Loading page…" : "No results found."}
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
 
-      {table.getPageCount() > 1 && (
+      {rowCount > 0 && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 border-t bg-muted/20">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="text-sm text-muted-foreground">
-              Showing{" "}
-              {table.state.pagination.pageIndex *
-                table.state.pagination.pageSize +
-                1}{" "}
-              to{" "}
-              {Math.min(
-                (table.state.pagination.pageIndex + 1) *
-                  table.state.pagination.pageSize,
-                data.length,
-              )}{" "}
-              of{" "}
-              <span className="font-medium text-foreground">{data.length}</span>{" "}
-              entries
+            <div className="text-sm text-muted-foreground" aria-live="polite">
+              {data.length > 0
+                ? `Showing ${pageIndex * pageSize + 1} to ${pageIndex * pageSize + data.length} of ${rowCount} entries`
+                : `${rowCount} entries`}
             </div>
             <div className="flex items-center gap-x-2">
               <p className="text-sm text-muted-foreground">Rows per page</p>
@@ -124,11 +145,14 @@ export function DataTable<TData extends RowData>({
                   table.setPageSize(Number(value))
                 }}
               >
-                <SelectTrigger className="h-8 w-[70px]">
+                <SelectTrigger
+                  aria-label="Rows per page"
+                  className="h-8 w-[70px]"
+                >
                   <SelectValue placeholder={table.state.pagination.pageSize} />
                 </SelectTrigger>
                 <SelectContent side="top">
-                  {[5, 10, 25, 50].map((pageSize) => (
+                  {pageSizes.map((pageSize) => (
                     <SelectItem key={pageSize} value={`${pageSize}`}>
                       {pageSize}
                     </SelectItem>

@@ -11,6 +11,7 @@ from app.api.deps import (
     SessionDep,
     get_current_active_superuser,
 )
+from app.api.pagination import PaginationDep
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.models import (
@@ -38,7 +39,7 @@ email_conflict: dict[int | str, dict[str, Any]] = {
     dependencies=[Depends(get_current_active_superuser)],
     response_model=UsersPublic,
 )
-async def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
+async def read_users(session: SessionDep, pagination: PaginationDep) -> UsersPublic:
     """
     Retrieve users.
     """
@@ -47,7 +48,10 @@ async def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> An
     count = (await session.exec(count_statement)).one()
 
     statement = (
-        select(User).order_by(col(User.created_at).desc()).offset(skip).limit(limit)
+        select(User)
+        .order_by(col(User.created_at).desc().nulls_last(), col(User.id).desc())
+        .offset(pagination.skip)
+        .limit(pagination.limit)
     )
     users = (await session.exec(statement)).all()
 

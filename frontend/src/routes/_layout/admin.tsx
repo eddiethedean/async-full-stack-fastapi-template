@@ -8,9 +8,11 @@ import { DataTable } from "@/components/Common/DataTable"
 import PendingUsers from "@/components/Pending/PendingUsers"
 import useAuth from "@/hooks/useAuth"
 import { privateQueryKey, useSession } from "@/lib/auth"
+import { paginationSearch } from "@/lib/pagination"
 
 export const Route = createFileRoute("/_layout/admin")({
   component: Admin,
+  validateSearch: paginationSearch,
   beforeLoad: ({ context }) => {
     if (context.user && !context.user.is_superuser) {
       throw redirect({
@@ -30,21 +32,52 @@ export const Route = createFileRoute("/_layout/admin")({
 function UsersTable() {
   const { user: currentUser } = useAuth()
   const { generation } = useSession()
-  const { data: users, error } = useQuery({
+  const { page, pageSize } = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const {
+    data: users,
+    error,
+    isPlaceholderData,
+    isFetching,
+  } = useQuery({
     queryFn: async ({ signal }) =>
-      (await UsersService.readUsers({ signal })).data,
-    queryKey: privateQueryKey(generation, "users"),
+      (
+        await UsersService.readUsers({
+          query: { skip: (page - 1) * pageSize, limit: pageSize },
+          signal,
+        })
+      ).data,
+    queryKey: [...privateQueryKey(generation, "users"), page, pageSize],
+    placeholderData: (previous, query) =>
+      query?.queryKey[1] === generation ? previous : undefined,
   })
 
   if (!users && error) throw error
   if (!users) return <PendingUsers />
 
-  const tableData: UserTableData[] = users.data.map((user: UserPublic) => ({
-    ...user,
-    isCurrentUser: currentUser?.id === user.id,
-  }))
+  const tableData: UserTableData[] = (isPlaceholderData ? [] : users.data).map(
+    (user: UserPublic) => ({
+      ...user,
+      isCurrentUser: currentUser?.id === user.id,
+    }),
+  )
 
-  return <DataTable columns={columns} data={tableData} />
+  return (
+    <DataTable
+      columns={columns}
+      data={tableData}
+      rowCount={users.count}
+      pagination={{ pageIndex: page - 1, pageSize }}
+      onPaginationChange={(next, replace) => {
+        void navigate({
+          search: { page: next.pageIndex + 1, pageSize: next.pageSize },
+          replace,
+        })
+      }}
+      loading={isPlaceholderData}
+      refreshing={isFetching || isPlaceholderData}
+    />
+  )
 }
 
 function Admin() {
