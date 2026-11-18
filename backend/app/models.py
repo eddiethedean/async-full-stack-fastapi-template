@@ -1,8 +1,9 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import MISSING, EmailStr, StrictInt
-from sqlalchemy import Index
+from sqlalchemy import Index, text
 from sqlmodel import Field, Relationship, SQLModel, col
 
 
@@ -52,8 +53,31 @@ class UpdatePassword(SQLModel):
 class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
+    auth_version: int = Field(default=0, sa_column_kwargs={"server_default": text("0")})
     created_at: datetime | None = Field(default_factory=get_datetime_utc)
     items: list[Item] = Relationship(back_populates="owner", cascade_delete=True)
+
+
+class AuthSession(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    kind: str = Field(max_length=16)
+    auth_version: int
+    cookie_digest: str | None = Field(default=None, max_length=64, unique=True)
+    created_at: datetime = Field(default_factory=get_datetime_utc)
+    expires_at: datetime = Field(index=True)
+    revoked_at: datetime | None = None
+
+
+class AccountActionToken(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    purpose: str = Field(max_length=32)
+    digest: str = Field(max_length=64, unique=True)
+    auth_version: int
+    created_at: datetime = Field(default_factory=get_datetime_utc)
+    expires_at: datetime = Field(index=True)
+    consumed_at: datetime | None = None
 
 
 # Properties to return via API, id is always required
@@ -128,7 +152,10 @@ class Token(SQLModel):
 # Contents of JWT token
 class TokenPayload(SQLModel):
     sub: uuid.UUID
+    sid: uuid.UUID
     exp: StrictInt
+    iat: StrictInt
+    purpose: Literal["access"]
 
 
 class NewPassword(SQLModel):

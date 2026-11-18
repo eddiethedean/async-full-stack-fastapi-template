@@ -35,7 +35,7 @@ const UserInformation = () => {
   const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const [editMode, setEditMode] = useState(false)
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, logout } = useAuth()
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -58,7 +58,11 @@ const UserInformation = () => {
     onSuccess: ({ data: updated }) => {
       form.reset({ full_name: updated.full_name ?? "", email: updated.email })
       showSuccessToast("User updated successfully")
-      toggleEditMode()
+      if (currentUser && updated.email !== currentUser.email) {
+        void logout()
+      } else {
+        toggleEditMode()
+      }
     },
     onError: handleError.bind(showErrorToast),
     onSettled: () => {

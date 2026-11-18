@@ -1,6 +1,7 @@
-from datetime import UTC, datetime, timedelta
+import asyncio
+from datetime import timedelta
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID
 
 import jwt
 import pytest
@@ -8,11 +9,18 @@ from httpx import AsyncClient
 from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import crud
 from app.core.config import settings
-from app.core.security import ALGORITHM, get_password_hash, verify_password
+from app.core.db import create_session
+from app.core.security import (
+    ALGORITHM,
+    create_access_token,
+    get_password_hash,
+    verify_password,
+)
+from app.core.sessions import AccountAction, issue_account_action, lock_user
 from app.crud import create_user
-from app.models import User, UserCreate
-from app.utils import generate_password_reset_token
+from app.models import AuthSession, User, UserCreate, get_datetime_utc
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
@@ -64,21 +72,37 @@ async def test_use_access_token(
     ],
 )
 async def test_unusable_access_credentials(
-    client: AsyncClient, claim_error: str
+    client: AsyncClient, db: AsyncSession, claim_error: str
 ) -> None:
     headers = {}
     if claim_error != "missing_token":
-        expiration = datetime.now(UTC) + timedelta(minutes=1)
-        claims: dict[str, str | datetime] = {
-            "sub": str(uuid4()),
-            "exp": expiration,
-        }
+        user = await create_user(
+            session=db,
+            user_create=UserCreate(
+                email=random_email(), password=random_lower_string()
+            ),
+        )
+        expiration = get_datetime_utc() + timedelta(minutes=1)
+        auth_session = AuthSession(
+            user_id=user.id,
+            kind="bearer",
+            auth_version=user.auth_version,
+            expires_at=expiration,
+        )
+        db.add(auth_session)
+        await db.commit()
+        claims = jwt.decode(
+            create_access_token(auth_session), options={"verify_signature": False}
+        )
         if claim_error == "missing_exp":
             del claims["exp"]
         elif claim_error == "invalid_sub":
             claims["sub"] = "not-a-uuid"
         elif claim_error == "expired":
             claims["exp"] = expiration - timedelta(minutes=2)
+        elif claim_error == "deleted_user":
+            await db.delete(user)
+            await db.commit()
         token = (
             "invalid"
             if claim_error == "invalid_token"
@@ -95,7 +119,11 @@ async def test_unusable_access_credentials(
 async def test_recovery_password(
     client: AsyncClient, normal_user_token_headers: dict[str, str]
 ) -> None:
-    with patch("app.api.routes.login.send_email", return_value=None) as send_email:
+    with (
+        patch("app.api.routes.login.send_email", return_value=None) as send_email,
+        patch.object(settings, "SMTP_HOST", "smtp.example.com"),
+        patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
+    ):
         email = "test@example.com"
         r = await client.post(
             f"{settings.API_V1_STR}/password-recovery/{email}",
@@ -136,24 +164,111 @@ async def test_reset_password(client: AsyncClient, db: AsyncSession) -> None:
         is_superuser=False,
     )
     user = await create_user(session=db, user_create=user_create)
-    token = generate_password_reset_token(email=email)
+    token = issue_account_action(
+        db, user, purpose="password_reset", expires_delta=timedelta(hours=1)
+    )
+    await db.commit()
     headers = await user_authentication_headers(
         client=client, email=email, password=password
     )
     data = {"new_password": new_password, "token": token}
 
-    r = await client.post(
-        f"{settings.API_V1_STR}/reset-password/",
-        headers=headers,
-        json=data,
+    responses = await asyncio.gather(
+        client.post(f"{settings.API_V1_STR}/reset-password/", json=data),
+        client.post(f"{settings.API_V1_STR}/reset-password/", json=data),
     )
-
-    assert r.status_code == 200
-    assert r.json() == {"message": "Password updated successfully"}
+    assert sorted(response.status_code for response in responses) == [200, 400]
+    assert next(r.json() for r in responses if r.status_code == 400) == {
+        "detail": "Invalid token"
+    }
+    expired_session = await client.get(
+        f"{settings.API_V1_STR}/users/me", headers=headers
+    )
+    assert expired_session.status_code == 401
 
     await db.refresh(user)
     verified, _ = verify_password(new_password, user.hashed_password)
     assert verified
+    new_headers = await user_authentication_headers(
+        client=client, email=email, password=new_password
+    )
+    assert (
+        await client.get(f"{settings.API_V1_STR}/users/me", headers=new_headers)
+    ).status_code == 200
+
+
+async def test_reset_can_retry_after_rolled_back_write(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    user = await create_user(
+        session=db,
+        user_create=UserCreate(email=random_email(), password=random_lower_string()),
+    )
+    token = issue_account_action(
+        db, user, purpose="password_reset", expires_delta=timedelta(hours=1)
+    )
+    await db.commit()
+    payload = {"token": token, "new_password": random_lower_string()}
+    url = f"{settings.API_V1_STR}/reset-password/"
+
+    with (
+        patch("app.api.routes.login.crud.set_password", side_effect=RuntimeError),
+        pytest.raises(RuntimeError),
+    ):
+        await client.post(url, json=payload)
+    assert (await client.post(url, json=payload)).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("purpose", "ttl"),
+    [("invite", timedelta(hours=1)), ("password_reset", timedelta(hours=-1))],
+)
+async def test_reset_rejects_unusable_action_links(
+    client: AsyncClient, db: AsyncSession, purpose: AccountAction, ttl: timedelta
+) -> None:
+    user = await create_user(
+        session=db,
+        user_create=UserCreate(email=random_email(), password=random_lower_string()),
+    )
+    token = issue_account_action(db, user, purpose=purpose, expires_delta=ttl)
+    await db.commit()
+    response = await client.post(
+        f"{settings.API_V1_STR}/reset-password/",
+        json={"token": token, "new_password": random_lower_string()},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid token"}
+
+
+async def test_login_rechecks_credentials_after_verification(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    email = random_email()
+    old_password, new_password = random_lower_string(), random_lower_string()
+    user = await create_user(
+        session=db, user_create=UserCreate(email=email, password=old_password)
+    )
+    new_hash = get_password_hash(new_password)
+
+    async def change_credentials_before_login_locks(
+        login_session: AsyncSession, user_id: UUID
+    ) -> User | None:
+        async with create_session() as change_session:
+            changing_user = await lock_user(change_session, user_id)
+            assert changing_user is not None
+            await crud.set_password(change_session, changing_user, new_hash)
+            await change_session.commit()
+        return await lock_user(login_session, user_id)
+
+    with patch("app.crud.lock_user", side_effect=change_credentials_before_login_locks):
+        stale_login = await client.post(
+            f"{settings.API_V1_STR}/login/access-token",
+            data={"username": email, "password": old_password},
+        )
+    assert stale_login.status_code == 400
+    await db.refresh(user)
+    assert user.hashed_password == new_hash
+    await user_authentication_headers(client=client, email=email, password=new_password)
 
 
 async def test_reset_password_invalid_token(

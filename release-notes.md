@@ -7,6 +7,10 @@
 * Upgrade FastAPI to 0.164 and Pydantic to 2.14. The app keeps the existing
   login form contract and still serves the built frontend through FastAPI.
   FastAPI can export OpenTelemetry when explicitly configured.
+* Sign in again after upgrading. Existing bearer tokens and password recovery
+  links are invalid once session-backed authentication is deployed. OAuth2
+  clients can still obtain a token from the same login endpoint. Password changes,
+  recovery address changes, and account deactivation end existing sessions.
 
 ### Fixes
 
