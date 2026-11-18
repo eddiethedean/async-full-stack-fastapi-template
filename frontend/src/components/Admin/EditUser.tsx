@@ -63,32 +63,27 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
   const queryClient = useQueryClient()
   const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
+  const defaultValues = {
+    email: user.email,
+    full_name: user.full_name ?? "",
+    is_superuser: user.is_superuser,
+    is_active: user.is_active,
+    password: "",
+    confirm_password: "",
+  }
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     mode: "onBlur",
     criteriaMode: "all",
-    defaultValues: {
-      email: user.email,
-      full_name: user.full_name ?? "",
-      is_superuser: user.is_superuser,
-      is_active: user.is_active,
-    },
+    defaultValues,
   })
   const { dirtyFields } = form.formState
 
   const mutation = usePrivateMutation({
     mutationFn: (data: UserUpdate) =>
       UsersService.updateUser({ path: { user_id: user.id }, body: data }),
-    onSuccess: ({ data: updated }) => {
-      form.reset({
-        email: updated.email,
-        full_name: updated.full_name ?? "",
-        is_superuser: updated.is_superuser,
-        is_active: updated.is_active,
-        password: "",
-        confirm_password: "",
-      })
+    onSuccess: () => {
       showSuccessToast("User updated successfully")
       setIsOpen(false)
       onSuccess()
@@ -115,7 +110,10 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          form.reset(defaultValues)
+          setIsOpen(true)
+        }}
       >
         <Pencil />
         Edit User

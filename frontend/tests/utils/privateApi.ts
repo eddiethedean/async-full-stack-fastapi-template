@@ -3,9 +3,11 @@ import type { UserPublic } from "../../src/client"
 export const createUser = async ({
   email,
   password,
+  fullName = "Test User",
 }: {
   email: string
   password: string
+  fullName?: string
 }) => {
   const baseURL = process.env.PLAYWRIGHT_BASE_URL
   const response = await fetch(new URL("/api/v1/private/users/", baseURL), {
@@ -14,7 +16,7 @@ export const createUser = async ({
     body: JSON.stringify({
       email,
       password,
-      full_name: "Test User",
+      full_name: fullName,
     }),
   })
   if (!response.ok) {
