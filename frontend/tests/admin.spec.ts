@@ -17,6 +17,29 @@ test("Add User button is visible", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Add User" })).toBeVisible()
 })
 
+test("A denied refresh hides the cached user list without signing out", async ({
+  page,
+}) => {
+  await page.goto("/admin")
+  await expect(page.getByRole("table").getByText(/@/).first()).toBeVisible()
+  await page.getByRole("link", { name: "Dashboard" }).click()
+
+  await page.route("**/api/v1/users/", (route) =>
+    route.fulfill({
+      status: 403,
+      json: { detail: "The user doesn't have enough privileges" },
+    }),
+  )
+  await page.getByRole("link", { name: "Admin" }).click()
+
+  await expect(
+    page.getByText("You don't have permission to access this resource."),
+  ).toBeVisible()
+  await expect(page.getByRole("table")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Add User" })).toHaveCount(0)
+  await expect(page.getByTestId("user-menu")).toContainText(firstSuperuser)
+})
+
 test.describe("Admin user management", () => {
   test("Create a new user successfully", async ({ page }) => {
     await page.goto("/admin")

@@ -1,12 +1,15 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
+import jwt
 import pytest
 from httpx import AsyncClient
 from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
+from app.core.security import ALGORITHM, get_password_hash, verify_password
 from app.crud import create_user
 from app.models import User, UserCreate
 from app.utils import generate_password_reset_token
@@ -47,6 +50,46 @@ async def test_use_access_token(
     result = r.json()
     assert r.status_code == 200
     assert "email" in result
+
+
+@pytest.mark.parametrize(
+    "claim_error",
+    [
+        "missing_token",
+        "invalid_token",
+        "missing_exp",
+        "invalid_sub",
+        "expired",
+        "deleted_user",
+    ],
+)
+async def test_unusable_access_credentials(
+    client: AsyncClient, claim_error: str
+) -> None:
+    headers = {}
+    if claim_error != "missing_token":
+        expiration = datetime.now(UTC) + timedelta(minutes=1)
+        claims: dict[str, str | datetime] = {
+            "sub": str(uuid4()),
+            "exp": expiration,
+        }
+        if claim_error == "missing_exp":
+            del claims["exp"]
+        elif claim_error == "invalid_sub":
+            claims["sub"] = "not-a-uuid"
+        elif claim_error == "expired":
+            claims["exp"] = expiration - timedelta(minutes=2)
+        token = (
+            "invalid"
+            if claim_error == "invalid_token"
+            else jwt.encode(claims, settings.SECRET_KEY, algorithm=ALGORITHM)
+        )
+        headers["Authorization"] = f"Bearer {token}"
+
+    response = await client.get(f"{settings.API_V1_STR}/users/me", headers=headers)
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 async def test_recovery_password(

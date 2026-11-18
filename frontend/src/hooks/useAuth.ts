@@ -1,29 +1,33 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
 import {
   type Body_login_login_access_token as AccessToken,
   LoginService,
-  type UserPublic,
   type UserRegister,
   UsersService,
 } from "@/client"
+import {
+  currentUserOptions,
+  getSession,
+  replaceAccessToken,
+  useSession,
+} from "@/lib/auth"
 import { handleError } from "@/utils"
 import useCustomToast from "./useCustomToast"
 
 const isLoggedIn = () => {
-  return localStorage.getItem("access_token") !== null
+  return getSession().accessToken !== null
 }
 
 const useAuth = () => {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
+  const { accessToken, generation } = useSession()
 
-  const { data: user } = useQuery<UserPublic | null, Error>({
-    queryKey: ["currentUser"],
-    queryFn: async () => (await UsersService.readUserMe()).data,
-    enabled: isLoggedIn(),
+  const { data: user } = useQuery({
+    ...currentUserOptions(generation),
+    enabled: accessToken !== null,
   })
 
   const signUpMutation = useMutation({
@@ -33,29 +37,23 @@ const useAuth = () => {
       navigate({ to: "/login" })
     },
     onError: handleError.bind(showErrorToast),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] })
-    },
   })
 
-  const login = async (data: AccessToken) => {
-    const response = await LoginService.loginAccessToken({
-      body: data,
-    })
-    localStorage.setItem("access_token", response.data.access_token)
-  }
-
   const loginMutation = useMutation({
-    mutationFn: login,
-    onSuccess: () => {
-      navigate({ to: "/" })
+    mutationFn: (data: AccessToken) =>
+      LoginService.loginAccessToken({ body: data }),
+    onSuccess: ({ data }) => {
+      if (replaceAccessToken(data.access_token, generation)) {
+        void navigate({ to: "/" })
+      }
     },
     onError: handleError.bind(showErrorToast),
   })
 
   const logout = () => {
-    localStorage.removeItem("access_token")
-    navigate({ to: "/login" })
+    if (replaceAccessToken(null, generation)) {
+      void navigate({ to: "/login", replace: true })
+    }
   }
 
   return {

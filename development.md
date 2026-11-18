@@ -168,3 +168,9 @@ You can also run `prek` manually on all files from the project root:
 ```bash
 uv run prek run --all-files
 ```
+## Protected API responses
+
+Protected routes return `401 Unauthorized` for missing or invalid credentials.
+Bearer clients receive a `WWW-Authenticate: Bearer` header and can sign in
+again. A `403 Forbidden` response means the current account lacks the
+required permissions.

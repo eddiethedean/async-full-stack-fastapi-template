@@ -1,27 +1,20 @@
-import { useSuspenseQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, redirect } from "@tanstack/react-router"
-import { Suspense } from "react"
 
-import { type UserPublic, UsersService } from "@/client"
+import { UsersService } from "@/client"
 import AddUser from "@/components/Admin/AddUser"
 import { columns, type UserTableData } from "@/components/Admin/columns"
 import { DataTable } from "@/components/Common/DataTable"
+import ErrorComponent from "@/components/Common/ErrorComponent"
 import PendingUsers from "@/components/Pending/PendingUsers"
 import useAuth from "@/hooks/useAuth"
-
-function getUsersQueryOptions() {
-  return {
-    queryFn: async () =>
-      (await UsersService.readUsers({ query: { skip: 0, limit: 100 } })).data,
-    queryKey: ["users"],
-  }
-}
+import { privateQueryKey, useSession } from "@/lib/auth"
+import { isForbiddenError } from "@/utils"
 
 export const Route = createFileRoute("/_layout/admin")({
   component: Admin,
-  beforeLoad: async () => {
-    const { data: user } = await UsersService.readUserMe()
-    if (!user.is_superuser) {
+  beforeLoad: ({ context }) => {
+    if (context.user && !context.user.is_superuser) {
       throw redirect({
         to: "/",
       })
@@ -36,27 +29,25 @@ export const Route = createFileRoute("/_layout/admin")({
   }),
 })
 
-function UsersTableContent() {
+function Admin() {
   const { user: currentUser } = useAuth()
-  const { data: users } = useSuspenseQuery(getUsersQueryOptions())
+  const { generation } = useSession()
+  const { data: users, error } = useQuery({
+    queryFn: async ({ signal }) =>
+      (await UsersService.readUsers({ signal })).data,
+    queryKey: privateQueryKey(generation, "users"),
+    retry: (failureCount, error) =>
+      !isForbiddenError(error) && failureCount < 3,
+  })
 
-  const tableData: UserTableData[] = users.data.map((user: UserPublic) => ({
+  if (isForbiddenError(error)) return <ErrorComponent error={error} />
+  if (!users && error) throw error
+
+  const tableData: UserTableData[] | undefined = users?.data.map((user) => ({
     ...user,
     isCurrentUser: currentUser?.id === user.id,
   }))
 
-  return <DataTable columns={columns} data={tableData} />
-}
-
-function UsersTable() {
-  return (
-    <Suspense fallback={<PendingUsers />}>
-      <UsersTableContent />
-    </Suspense>
-  )
-}
-
-function Admin() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -68,7 +59,11 @@ function Admin() {
         </div>
         <AddUser />
       </div>
-      <UsersTable />
+      {tableData ? (
+        <DataTable columns={columns} data={tableData} />
+      ) : (
+        <PendingUsers />
+      )}
     </div>
   )
 }

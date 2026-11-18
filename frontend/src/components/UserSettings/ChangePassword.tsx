@@ -1,5 +1,4 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
@@ -15,6 +14,7 @@ import {
 import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
 import useCustomToast from "@/hooks/useCustomToast"
+import { usePrivateMutation } from "@/hooks/usePrivateMutation"
 import { handleError } from "@/utils"
 
 const formSchema = z
@@ -51,7 +51,7 @@ const ChangePassword = () => {
     },
   })
 
-  const mutation = useMutation({
+  const mutation = usePrivateMutation({
     mutationFn: (data: UpdatePassword) =>
       UsersService.updatePasswordMe({ body: data }),
     onSuccess: () => {

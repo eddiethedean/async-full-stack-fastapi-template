@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { Pencil } from "lucide-react"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
@@ -28,6 +28,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import useCustomToast from "@/hooks/useCustomToast"
+import { usePrivateMutation } from "@/hooks/usePrivateMutation"
+import { privateQueryKey, useSession } from "@/lib/auth"
 import { handleError } from "@/utils"
 
 const formSchema = z.object({
@@ -45,6 +47,7 @@ interface EditItemProps {
 const EditItem = ({ item, onSuccess }: EditItemProps) => {
   const [isOpen, setIsOpen] = useState(false)
   const queryClient = useQueryClient()
+  const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
 
   const form = useForm<FormData>({
@@ -57,7 +60,7 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
     },
   })
 
-  const mutation = useMutation({
+  const mutation = usePrivateMutation({
     mutationFn: (data: FormData) =>
       ItemsService.updateItem({ path: { id: item.id }, body: data }),
     onSuccess: () => {
@@ -67,7 +70,9 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
     },
     onError: handleError.bind(showErrorToast),
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["items"] })
+      queryClient.invalidateQueries({
+        queryKey: privateQueryKey(generation, "items"),
+      })
     },
   })
 

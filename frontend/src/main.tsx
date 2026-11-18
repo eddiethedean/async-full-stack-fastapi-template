@@ -1,43 +1,71 @@
-import {
-  MutationCache,
-  QueryCache,
-  QueryClient,
-  QueryClientProvider,
-} from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { createRouter, RouterProvider } from "@tanstack/react-router"
-import { AxiosError } from "axios"
+import { type InternalAxiosRequestConfig, isAxiosError } from "axios"
 import { StrictMode } from "react"
 import ReactDOM from "react-dom/client"
 import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
+import {
+  accessTokenKey,
+  getSession,
+  queryClient,
+  replaceAccessToken,
+  syncSessionFromStorage,
+} from "./lib/auth"
 import "./index.css"
 import { routeTree } from "./routeTree.gen"
 
 client.setConfig({
   baseURL: import.meta.env.VITE_API_URL ?? "",
-  auth: () => localStorage.getItem("access_token") || "",
-})
-
-const handleApiError = (error: Error) => {
-  if (
-    error instanceof AxiosError &&
-    [401, 403].includes(error.response?.status ?? 0)
-  ) {
-    localStorage.removeItem("access_token")
-    window.location.href = "/login"
-  }
-}
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: handleApiError,
-  }),
-  mutationCache: new MutationCache({
-    onError: handleApiError,
-  }),
+  auth: () => getSession().accessToken ?? "",
 })
 
 const router = createRouter({ routeTree })
+const authenticatedRequests = new WeakMap<InternalAxiosRequestConfig, number>()
+
+function syncSession() {
+  if (syncSessionFromStorage()) void router.invalidate()
+}
+
+client.instance.interceptors.request.use(
+  (config) => {
+    const { accessToken, generation } = getSession()
+    if (
+      accessToken &&
+      config.headers.get("Authorization") === `Bearer ${accessToken}`
+    ) {
+      authenticatedRequests.set(config, generation)
+    }
+    return config
+  },
+  undefined,
+  { synchronous: true },
+)
+
+client.instance.interceptors.response.use(undefined, (error: unknown) => {
+  if (isAxiosError(error) && error.response?.status === 401 && error.config) {
+    const generation = authenticatedRequests.get(error.config)
+    if (generation !== undefined) {
+      if (replaceAccessToken(null, generation)) {
+        void router.navigate({ to: "/login", replace: true })
+      } else {
+        syncSession()
+      }
+    }
+  }
+  return Promise.reject(error)
+})
+
+window.addEventListener("storage", (event) => {
+  if (
+    event.storageArea !== localStorage ||
+    (event.key !== accessTokenKey && event.key !== null)
+  )
+    return
+  syncSession()
+})
+
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router
