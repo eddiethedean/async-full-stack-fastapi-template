@@ -1,6 +1,7 @@
 import uuid
 from typing import Literal
 
+from fastapi import HTTPException
 from psycopg.errors import UniqueViolation
 from pydantic import MISSING
 from sqlalchemy.exc import IntegrityError
@@ -17,17 +18,31 @@ class DuplicateEmailError(Exception):
     """The user's email already exists."""
 
 
+async def flush_user(session: AsyncSession, user: User) -> None:
+    session.add(user)
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        await session.rollback()
+        check_email_conflict(error)
+        raise
+
+
+def check_email_conflict(error: IntegrityError) -> None:
+    if (
+        isinstance(error.orig, UniqueViolation)
+        and error.orig.diag.constraint_name == "ix_user_email"
+    ):
+        raise DuplicateEmailError from error
+
+
 async def commit_user(session: AsyncSession, user: User) -> User:
     session.add(user)
     try:
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        if (
-            isinstance(error.orig, UniqueViolation)
-            and error.orig.diag.constraint_name == "ix_user_email"
-        ):
-            raise DuplicateEmailError from error
+        check_email_conflict(error)
         raise
     await session.refresh(user)
     return user
@@ -51,6 +66,11 @@ async def update_user(
     user = await lock_user(session, db_user.id)
     if user is None:
         return None
+    if user.invitation_pending and user_data.get("is_active"):
+        raise HTTPException(
+            status_code=409,
+            detail="Accept the invitation before activating this account",
+        )
     credentials_changed = (
         new_hash is not None
         or user_data.get("email", user.email) != user.email

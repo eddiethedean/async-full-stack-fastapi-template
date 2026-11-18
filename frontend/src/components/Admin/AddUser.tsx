@@ -5,7 +5,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import { type UserCreate, UsersService } from "@/client"
+import { UsersService } from "@/client"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -37,19 +37,28 @@ const formSchema = z
   .object({
     email: z.email({ message: "Invalid email address" }),
     full_name: z.string().optional(),
-    password: z
-      .string()
-      .min(1, { message: "Password is required" })
-      .min(8, { message: "Password must be at least 8 characters" }),
-    confirm_password: z
-      .string()
-      .min(1, { message: "Please confirm your password" }),
+    invite: z.boolean(),
+    password: z.string(),
+    confirm_password: z.string(),
     is_superuser: z.boolean(),
     is_active: z.boolean(),
   })
-  .refine((data) => data.password === data.confirm_password, {
-    message: "The passwords don't match",
-    path: ["confirm_password"],
+  .superRefine((data, context) => {
+    if (data.invite) return
+    if (data.password.length < 8) {
+      context.addIssue({
+        code: "custom",
+        path: ["password"],
+        message: "Password must be at least 8 characters",
+      })
+    }
+    if (data.password !== data.confirm_password) {
+      context.addIssue({
+        code: "custom",
+        path: ["confirm_password"],
+        message: "The passwords don't match",
+      })
+    }
   })
 
 type FormData = z.infer<typeof formSchema>
@@ -67,6 +76,7 @@ const AddUser = () => {
     defaultValues: {
       email: "",
       full_name: "",
+      invite: false,
       password: "",
       confirm_password: "",
       is_superuser: false,
@@ -74,10 +84,21 @@ const AddUser = () => {
     },
   })
 
+  const invite = form.watch("invite")
   const mutation = usePrivateMutation({
-    mutationFn: (data: UserCreate) => UsersService.createUser({ body: data }),
-    onSuccess: () => {
-      showSuccessToast("User created successfully")
+    mutationFn: (data: FormData) => {
+      const { email, full_name, is_superuser, is_active, password, invite } =
+        data
+      return invite
+        ? UsersService.inviteUser({ body: { email, full_name, is_superuser } })
+        : UsersService.createUser({
+            body: { email, full_name, is_superuser, is_active, password },
+          })
+    },
+    onSuccess: (_, data) => {
+      showSuccessToast(
+        data.invite ? "Invitation queued" : "User created successfully",
+      )
       form.reset()
       setIsOpen(false)
     },
@@ -148,47 +169,68 @@ const AddUser = () => {
 
               <FormField
                 control={form.control}
-                name="password"
+                name="invite"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Set Password <span className="text-destructive">*</span>
-                    </FormLabel>
+                  <FormItem className="flex items-center gap-3 space-y-0">
                     <FormControl>
-                      <Input
-                        placeholder="Password"
-                        type="password"
-                        {...field}
-                        required
+                      <Checkbox
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormLabel className="font-normal">
+                      Send invitation link
+                    </FormLabel>
                   </FormItem>
                 )}
               />
+              {!invite && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Set Password{" "}
+                          <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Password"
+                            type="password"
+                            {...field}
+                            required
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="confirm_password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Confirm Password{" "}
-                      <span className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="Password"
-                        type="password"
-                        {...field}
-                        required
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
+                  <FormField
+                    control={form.control}
+                    name="confirm_password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Confirm Password{" "}
+                          <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Password"
+                            type="password"
+                            {...field}
+                            required
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
               <FormField
                 control={form.control}
                 name="is_superuser"
@@ -205,21 +247,23 @@ const AddUser = () => {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="is_active"
-                render={({ field }) => (
-                  <FormItem className="flex items-center gap-3 space-y-0">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                    <FormLabel className="font-normal">Is active?</FormLabel>
-                  </FormItem>
-                )}
-              />
+              {!invite && (
+                <FormField
+                  control={form.control}
+                  name="is_active"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-3 space-y-0">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">Is active?</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              )}
             </div>
 
             <DialogFooter>

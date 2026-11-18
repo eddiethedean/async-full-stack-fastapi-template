@@ -9,6 +9,7 @@ from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
+from app.core.access_logs import configure_access_logs
 from app.core.config import settings
 from app.core.db import engine
 from app.crud import DuplicateEmailError
@@ -22,6 +23,7 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    configure_access_logs()
     try:
         yield
     finally:

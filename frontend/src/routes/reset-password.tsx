@@ -27,6 +27,7 @@ import { handleError } from "@/utils"
 
 const searchSchema = z.object({
   token: z.string().catch(""),
+  invite: z.boolean().catch(false),
 })
 
 const formSchema = z
@@ -59,6 +60,7 @@ export const Route = createFileRoute("/reset-password")({
   },
   head: () => ({
     meta: [
+      { name: "referrer", content: "no-referrer" },
       {
         title: "Reset Password - Async Full Stack FastAPI",
       },
@@ -67,7 +69,7 @@ export const Route = createFileRoute("/reset-password")({
 })
 
 function ResetPassword() {
-  const { token } = Route.useSearch()
+  const { token, invite } = Route.useSearch()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const navigate = useNavigate()
 
@@ -83,9 +85,13 @@ function ResetPassword() {
 
   const mutation = useMutation({
     mutationFn: (data: { new_password: string; token: string }) =>
-      LoginService.resetPassword({ body: data }),
+      invite
+        ? LoginService.acceptInvitation({ body: data })
+        : LoginService.resetPassword({ body: data }),
     onSuccess: () => {
-      showSuccessToast("Password updated successfully")
+      showSuccessToast(
+        invite ? "Your account is ready" : "Password updated successfully",
+      )
       form.reset()
       navigate({ to: "/login" })
     },
@@ -104,7 +110,9 @@ function ResetPassword() {
           className="flex flex-col gap-6"
         >
           <div className="flex flex-col items-center gap-2 text-center">
-            <h1 className="text-2xl font-bold">Reset Password</h1>
+            <h1 className="text-2xl font-bold">
+              {invite ? "Set Up Account" : "Reset Password"}
+            </h1>
           </div>
 
           <div className="grid gap-4">
@@ -149,7 +157,7 @@ function ResetPassword() {
               className="w-full"
               loading={mutation.isPending}
             >
-              Reset Password
+              {invite ? "Set Password" : "Reset Password"}
             </LoadingButton>
           </div>
 

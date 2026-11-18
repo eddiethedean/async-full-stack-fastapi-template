@@ -1,10 +1,12 @@
 import logging
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
+from smtplib import SMTP, SMTP_SSL, SMTPRecipientsRefused
+from ssl import create_default_context
 from typing import Any
 
-import emails
-from jinja2 import Template
+from jinja2 import Environment, select_autoescape
 
 from app.core.config import settings
 
@@ -22,7 +24,9 @@ def render_email_template(*, template_name: str, context: dict[str, Any]) -> str
     template_str = (
         Path(__file__).parent / "email-templates" / template_name
     ).read_text()
-    template: Template = Template(template_str)
+    template = Environment(
+        autoescape=select_autoescape(default_for_string=True)
+    ).from_string(template_str)
     html_content = template.render(context)
     return html_content
 
@@ -32,25 +36,40 @@ def send_email(
     email_to: str,
     subject: str = "",
     html_content: str = "",
+    message_id: str | None = None,
 ) -> None:
-    assert settings.emails_enabled, "no provided configuration for email variables"
-    assert settings.EMAILS_FROM_EMAIL  # For type checker
-    message = emails.message.Message(
-        subject=subject,
-        html=html_content,
-        mail_from=(settings.EMAILS_FROM_NAME, settings.EMAILS_FROM_EMAIL),
-    )
-    smtp_options = {"host": settings.SMTP_HOST, "port": settings.SMTP_PORT}
-    if settings.SMTP_TLS:
-        smtp_options["tls"] = True
-    elif settings.SMTP_SSL:
-        smtp_options["ssl"] = True
-    if settings.SMTP_USER:
-        smtp_options["user"] = settings.SMTP_USER
-    if settings.SMTP_PASSWORD:
-        smtp_options["password"] = settings.SMTP_PASSWORD
-    response = message.send(to=email_to, smtp=smtp_options)
-    logger.info(f"send email result: {response}")
+    if not settings.SMTP_HOST or not settings.EMAILS_FROM_EMAIL:
+        raise ValueError("Email is disabled")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
+    message["To"] = email_to
+    if message_id:
+        message["Message-ID"] = f"<{message_id}>"
+    message.set_content(html_content, subtype="html")
+    context = create_default_context()
+    smtp: SMTP
+    if settings.SMTP_SSL:
+        smtp = SMTP_SSL(
+            settings.SMTP_HOST,
+            settings.SMTP_PORT,
+            timeout=settings.SMTP_TIMEOUT_SECONDS,
+            context=context,
+        )
+    else:
+        smtp = SMTP(
+            settings.SMTP_HOST,
+            settings.SMTP_PORT,
+            timeout=settings.SMTP_TIMEOUT_SECONDS,
+        )
+    with smtp:
+        if settings.SMTP_TLS and not settings.SMTP_SSL:
+            smtp.starttls(context=context)
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        refused = smtp.send_message(message)
+        if refused:
+            raise SMTPRecipientsRefused(refused)
 
 
 def generate_test_email(email_to: str) -> EmailData:
@@ -80,19 +99,30 @@ def generate_reset_password_email(email_to: str, email: str, token: str) -> Emai
     return EmailData(html_content=html_content, subject=subject)
 
 
-def generate_new_account_email(
-    email_to: str, username: str, password: str
-) -> EmailData:
-    project_name = settings.PROJECT_NAME
-    subject = f"{project_name} - New account for user {username}"
+def generate_new_account_email(email_to: str) -> EmailData:
+    subject = f"{settings.PROJECT_NAME} - Your account is ready"
     html_content = render_email_template(
         template_name="new_account.html",
         context={
             "project_name": settings.PROJECT_NAME,
-            "username": username,
-            "password": password,
+            "link": f"{settings.FRONTEND_HOST.rstrip('/')}/login",
             "email": email_to,
-            "link": settings.FRONTEND_HOST,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
+def generate_invitation_email(email_to: str, token: str) -> EmailData:
+    subject = f"{settings.PROJECT_NAME} - Invitation"
+    link = (
+        f"{settings.FRONTEND_HOST.rstrip('/')}/reset-password?invite=true&token={token}"
+    )
+    html_content = render_email_template(
+        template_name="invite.html",
+        context={
+            "project_name": settings.PROJECT_NAME,
+            "email": email_to,
+            "link": link,
         },
     )
     return EmailData(html_content=html_content, subject=subject)

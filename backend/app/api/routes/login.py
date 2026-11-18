@@ -1,9 +1,11 @@
+import hashlib
 from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlmodel import col, select
 from starlette.concurrency import run_in_threadpool
 
 from app import crud
@@ -11,20 +13,23 @@ from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security
 from app.core.config import settings
 from app.core.sessions import (
+    advance_auth_version,
     consume_account_action,
     find_account_action_user_id,
     issue_account_action,
-    lock_user,
 )
+from app.email_outbox import enqueue_email
 from app.models import (
     AuthSession,
     Message,
     NewPassword,
+    RecoveryRequest,
     Token,
+    User,
     UserPublic,
     get_datetime_utc,
 )
-from app.utils import generate_reset_password_email, send_email
+from app.utils import generate_reset_password_email
 
 router = APIRouter(tags=["login"])
 
@@ -65,44 +70,67 @@ def test_token(current_user: CurrentUser) -> Any:
     return current_user
 
 
-@router.post("/password-recovery/{email}")
-async def recover_password(email: str, session: SessionDep) -> Message:
-    """
-    Password Recovery
-    """
-    user = (
-        await crud.get_user_by_email(session=session, email=email)
-        if settings.emails_enabled
-        else None
-    )
-
-    # Always return the same response to prevent email enumeration attacks
-    # Only send email if user actually exists
-    if user is not None:
-        user = await lock_user(session, user.id)
-    if user is not None and user.is_active and user.email == email:
-        password_reset_token = issue_account_action(
-            session,
-            user,
-            purpose="password_reset",
-            expires_delta=timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS),
-        )
-        await session.commit()
-        email_data = await run_in_threadpool(
-            generate_reset_password_email,
-            email_to=user.email,
-            email=email,
-            token=password_reset_token,
-        )
-        await run_in_threadpool(
-            send_email,
-            email_to=user.email,
-            subject=email_data.subject,
-            html_content=email_data.html_content,
-        )
+async def queue_recovery(email: str, session: SessionDep) -> Message:
+    if settings.emails_enabled:
+        user = (
+            await session.exec(
+                select(User)
+                .where(col(User.email) == email, col(User.is_active).is_(True))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).first()
+        if user is not None:
+            expires_delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
+            token = issue_account_action(
+                session, user, purpose="password_reset", expires_delta=expires_delta
+            )
+            enqueue_email(
+                session,
+                kind="password_reset",
+                recipient=user.email,
+                deduplication_key=f"reset:{hashlib.sha256(token.encode()).hexdigest()}",
+                token=token,
+                expires_delta=expires_delta,
+            )
+            await session.commit()
     return Message(
         message="If that email is registered, we sent a password recovery link"
     )
+
+
+@router.post("/password-recovery")
+async def recover_password_by_email(
+    body: RecoveryRequest, session: SessionDep
+) -> Message:
+    return await queue_recovery(body.email, session)
+
+
+@router.post("/password-recovery/{email}", deprecated=True)
+async def recover_password(email: str, session: SessionDep) -> Message:
+    return await queue_recovery(email, session)
+
+
+@router.post("/invitations/accept")
+async def accept_invitation(body: NewPassword, session: SessionDep) -> Message:
+    if await find_account_action_user_id(session, body.token, purpose="invite") is None:
+        raise HTTPException(status_code=400, detail="Invalid invitation")
+    # End the preflight transaction before hashing.
+    await session.rollback()
+    password_hash = await run_in_threadpool(
+        security.get_password_hash, body.new_password
+    )
+    user = await consume_account_action(
+        session, body.token, purpose="invite", require_active=False
+    )
+    if user is None or not user.invitation_pending:
+        raise HTTPException(status_code=400, detail="Invalid invitation")
+    user.hashed_password = password_hash
+    user.invitation_pending = False
+    user.is_active = True
+    await advance_auth_version(session, user)
+    await session.commit()
+    return Message(message="Your account is ready. Sign in to continue.")
 
 
 @router.post("/reset-password/")

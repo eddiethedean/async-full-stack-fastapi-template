@@ -58,7 +58,6 @@ async def test_create_user_new_email(
     client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
 ) -> None:
     with (
-        patch("app.api.routes.users.send_email", return_value=None),
         patch("app.core.config.settings.SMTP_HOST", "smtp.example.com"),
         patch("app.core.config.settings.SMTP_USER", "admin@example.com"),
     ):
@@ -603,3 +602,70 @@ async def test_delete_user_without_privileges(
     )
     assert r.status_code == 403
     assert r.json()["detail"] == "The user doesn't have enough privileges"
+
+
+async def test_pending_invitation_activates_only_on_acceptance(
+    client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
+) -> None:
+    from app.email_outbox import EmailOutbox, get_cipher
+
+    email = random_email()
+    with (
+        patch.object(settings, "SMTP_HOST", "smtp.example.com"),
+        patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
+    ):
+        response = await client.post(
+            f"{settings.API_V1_STR}/users/invite",
+            headers=superuser_token_headers,
+            json={"email": email},
+        )
+    assert response.status_code == 201, response.json()
+    user = response.json()
+    assert user["invitation_pending"] and not user["is_active"]
+
+    response = await client.patch(
+        f"{settings.API_V1_STR}/users/{user['id']}",
+        headers=superuser_token_headers,
+        json={"is_active": True},
+    )
+    assert response.status_code == 409
+
+    job = (
+        await db.exec(select(EmailOutbox).where(EmailOutbox.recipient == email))
+    ).one()
+    assert job.payload and job.key_version
+    token = get_cipher(job.key_version).decrypt(job.payload).decode()
+    password = random_lower_string()
+    for expected_status in (200, 400):
+        response = await client.post(
+            f"{settings.API_V1_STR}/invitations/accept",
+            json={"token": token, "new_password": password},
+        )
+        assert response.status_code == expected_status
+    response = await client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": email, "password": password},
+    )
+    assert response.status_code == 200
+
+
+async def test_invites_require_email_without_changing_recovery_response(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", None)
+    response = await client.post(
+        f"{settings.API_V1_STR}/users/invite",
+        headers=superuser_token_headers,
+        json={"email": random_email()},
+    )
+    assert response.status_code == 503
+    results = [
+        await client.post(
+            f"{settings.API_V1_STR}/password-recovery", json={"email": email}
+        )
+        for email in (settings.FIRST_SUPERUSER, random_email())
+    ]
+    assert all(result.status_code == 200 for result in results)
+    assert results[0].json() == results[1].json()

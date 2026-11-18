@@ -12,8 +12,6 @@ services:
       - --providers.docker.exposedbydefault=false
       # Create an entrypoint "http" listening on port 80
       - --entrypoints.http.address=:80
-      # Enable the access log, with HTTP requests
-      - --accesslog
       # Enable the Traefik log, for configurations and errors
       - --log
 
@@ -52,12 +50,18 @@ services:
       db:
         condition: service_healthy
         restart: true
-    environment:
+    environment: &app-environment
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
       FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
       FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
-      SMTP_HOST: ${SMTP_HOST}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      SMTP_SSL: ${SMTP_SSL:-false}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-15}
+      EMAIL_OUTBOX_KEYS: ${EMAIL_OUTBOX_KEYS:-}
+      EMAIL_OUTBOX_KEY_VERSION: ${EMAIL_OUTBOX_KEY_VERSION:-v1}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
@@ -70,7 +74,7 @@ services:
       timeout: 5s
       retries: 5
 
-    build:
+    build: &app-build
       context: .
       dockerfile: backend/Dockerfile
     labels:
@@ -83,6 +87,16 @@ services:
       # Route HTTP traffic for this domain
       - traefik.http.routers.backend-http.rule=Host(`${DOMAIN:-localhost}`)
       - traefik.http.routers.backend-http.entrypoints=http
+
+  email-worker:
+    image: backend:latest
+    build: *app-build
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-environment
+    command: ["python", "-m", "app.email_worker"]
+    stop_grace_period: 2m
 
 volumes:
   app-db-data:

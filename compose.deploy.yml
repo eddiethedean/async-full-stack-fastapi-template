@@ -26,8 +26,6 @@ services:
       - --certificatesresolvers.le.acme.storage=/certificates/acme.json
       # Use the TLS Challenge for Let's Encrypt
       - --certificatesresolvers.le.acme.tlschallenge=true
-      # Enable the access log, with HTTP requests
-      - --accesslog
       # Enable the Traefik log, for configurations and errors
       - --log
 
@@ -55,6 +53,11 @@ services:
       - traefik.http.routers.backend-https.tls=true
       # Use the Let's Encrypt resolver
       - traefik.http.routers.backend-https.tls.certresolver=le
+
+  email-worker:
+    restart: on-failure
+    environment:
+      FRONTEND_HOST: https://${DOMAIN:?Variable not set}
 
 volumes:
   # Create a volume to store the certificates, even if the container is recreated

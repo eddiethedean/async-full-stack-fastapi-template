@@ -2,7 +2,7 @@
 
 import { type Client, type Options as Options2, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { authCreateBrowserSessionData, authCreateBrowserSessionErrors, authCreateBrowserSessionResponses, authDeleteBrowserSessionData, authDeleteBrowserSessionResponses, authLogoutAllData, authLogoutAllResponses, authReadBrowserSessionData, authReadBrowserSessionResponses, itemsCreateItemData, itemsCreateItemErrors, itemsCreateItemResponses, itemsDeleteItemData, itemsDeleteItemErrors, itemsDeleteItemResponses, itemsReadItemData, itemsReadItemErrors, itemsReadItemResponses, itemsReadItemsData, itemsReadItemsErrors, itemsReadItemsResponses, itemsUpdateItemData, itemsUpdateItemErrors, itemsUpdateItemResponses, loginLoginAccessTokenData, loginLoginAccessTokenErrors, loginLoginAccessTokenResponses, loginRecoverPasswordData, loginRecoverPasswordErrors, loginRecoverPasswordHtmlContentData, loginRecoverPasswordHtmlContentErrors, loginRecoverPasswordHtmlContentResponses, loginRecoverPasswordResponses, loginResetPasswordData, loginResetPasswordErrors, loginResetPasswordResponses, loginTestTokenData, loginTestTokenResponses, usersCreateUserData, usersCreateUserErrors, usersCreateUserResponses, usersDeleteUserData, usersDeleteUserErrors, usersDeleteUserMeData, usersDeleteUserMeResponses, usersDeleteUserResponses, usersReadUserByIdData, usersReadUserByIdErrors, usersReadUserByIdResponses, usersReadUserMeData, usersReadUserMeResponses, usersReadUsersData, usersReadUsersErrors, usersReadUsersResponses, usersRegisterUserData, usersRegisterUserErrors, usersRegisterUserResponses, usersUpdatePasswordMeData, usersUpdatePasswordMeErrors, usersUpdatePasswordMeResponses, usersUpdateUserData, usersUpdateUserErrors, usersUpdateUserMeData, usersUpdateUserMeErrors, usersUpdateUserMeResponses, usersUpdateUserResponses, utilsHealthCheckData, utilsHealthCheckResponses, utilsTestEmailData, utilsTestEmailErrors, utilsTestEmailResponses } from './types.gen';
+import type { authCreateBrowserSessionData, authCreateBrowserSessionErrors, authCreateBrowserSessionResponses, authDeleteBrowserSessionData, authDeleteBrowserSessionResponses, authLogoutAllData, authLogoutAllResponses, authReadBrowserSessionData, authReadBrowserSessionResponses, itemsCreateItemData, itemsCreateItemErrors, itemsCreateItemResponses, itemsDeleteItemData, itemsDeleteItemErrors, itemsDeleteItemResponses, itemsReadItemData, itemsReadItemErrors, itemsReadItemResponses, itemsReadItemsData, itemsReadItemsErrors, itemsReadItemsResponses, itemsUpdateItemData, itemsUpdateItemErrors, itemsUpdateItemResponses, loginAcceptInvitationData, loginAcceptInvitationErrors, loginAcceptInvitationResponses, loginLoginAccessTokenData, loginLoginAccessTokenErrors, loginLoginAccessTokenResponses, loginRecoverPasswordByEmailData, loginRecoverPasswordByEmailErrors, loginRecoverPasswordByEmailResponses, loginRecoverPasswordData, loginRecoverPasswordErrors, loginRecoverPasswordHtmlContentData, loginRecoverPasswordHtmlContentErrors, loginRecoverPasswordHtmlContentResponses, loginRecoverPasswordResponses, loginResetPasswordData, loginResetPasswordErrors, loginResetPasswordResponses, loginTestTokenData, loginTestTokenResponses, usersCreateUserData, usersCreateUserErrors, usersCreateUserResponses, usersDeleteUserData, usersDeleteUserErrors, usersDeleteUserMeData, usersDeleteUserMeResponses, usersDeleteUserResponses, usersInviteUserData, usersInviteUserErrors, usersInviteUserResponses, usersReadUserByIdData, usersReadUserByIdErrors, usersReadUserByIdResponses, usersReadUserMeData, usersReadUserMeResponses, usersReadUsersData, usersReadUsersErrors, usersReadUsersResponses, usersRegisterUserData, usersRegisterUserErrors, usersRegisterUserResponses, usersUpdatePasswordMeData, usersUpdatePasswordMeErrors, usersUpdatePasswordMeResponses, usersUpdateUserData, usersUpdateUserErrors, usersUpdateUserMeData, usersUpdateUserMeErrors, usersUpdateUserMeResponses, usersUpdateUserResponses, utilsHealthCheckData, utilsHealthCheckResponses, utilsTestEmailData, utilsTestEmailErrors, utilsTestEmailResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -132,15 +132,45 @@ export class LoginService {
     }
     
     /**
+     * Recover Password By Email
+     */
+    public static recoverPasswordByEmail<ThrowOnError extends boolean = true>(options: Options<loginRecoverPasswordByEmailData, ThrowOnError>) {
+        return (options.client ?? client).post<loginRecoverPasswordByEmailResponses, loginRecoverPasswordByEmailErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/password-recovery',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+    
+    /**
      * Recover Password
      *
-     * Password Recovery
+     * @deprecated
      */
     public static recoverPassword<ThrowOnError extends boolean = true>(options: Options<loginRecoverPasswordData, ThrowOnError>) {
         return (options.client ?? client).post<loginRecoverPasswordResponses, loginRecoverPasswordErrors, ThrowOnError>({
             responseType: 'json',
             url: '/api/v1/password-recovery/{email}',
             ...options
+        });
+    }
+    
+    /**
+     * Accept Invitation
+     */
+    public static acceptInvitation<ThrowOnError extends boolean = true>(options: Options<loginAcceptInvitationData, ThrowOnError>) {
+        return (options.client ?? client).post<loginAcceptInvitationResponses, loginAcceptInvitationErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/invitations/accept',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
     
@@ -213,6 +243,26 @@ export class UsersService {
                     type: 'apiKey'
                 }],
             url: '/api/v1/users/',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+    
+    /**
+     * Invite User
+     */
+    public static inviteUser<ThrowOnError extends boolean = true>(options: Options<usersInviteUserData, ThrowOnError>) {
+        return (options.client ?? client).post<usersInviteUserResponses, usersInviteUserErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }, {
+                    in: 'cookie',
+                    name: '__Host-asf_session',
+                    type: 'apiKey'
+                }],
+            url: '/api/v1/users/invite',
             ...options,
             headers: {
                 'Content-Type': 'application/json',

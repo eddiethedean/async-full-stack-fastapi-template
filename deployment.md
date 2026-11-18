@@ -93,3 +93,24 @@ The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
 To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokeshow), add `SMOKESHOW_AUTH_KEY` as a repository secret.
+
+## Account email delivery
+
+After migrating the database, run `python -m app.email_worker` from the backend
+working directory as a separate long-running process. For FastAPI Cloud, run
+this process on a worker host with access to the same database and SMTP service.
+Provide the same `FRONTEND_HOST`, mail settings, and outbox key configuration
+to the API and worker.
+
+Generate a Fernet key using `Fernet.generate_key()` from `cryptography.fernet`
+and store it in the secret manager. Set `EMAIL_OUTBOX_KEYS` to a JSON object
+mapping version names to keys, and set `EMAIL_OUTBOX_KEY_VERSION` to its active
+entry. To rotate, deploy the new key to both processes before making it active,
+then keep the previous entry until all jobs using it have completed or expired.
+The built-in development key derivation is only for local testing.
+
+Delivery is at least once. In an ambiguous SMTP failure, a message may arrive
+twice with the same message ID and the same single-use link. Check the
+`email_outbox` delivery status and safe error categories when diagnosing a job.
+Only the time-limited encrypted credential is queued, and the worker discards
+it on delivery or terminal failure.

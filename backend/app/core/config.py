@@ -2,11 +2,13 @@ import warnings
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet
 from pydantic import (
     EmailStr,
     Field,
     HttpUrl,
     PostgresDsn,
+    SecretStr,
     computed_field,
     field_validator,
     model_validator,
@@ -74,6 +76,9 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
     SMTP_PORT: int = 587
+    SMTP_TIMEOUT_SECONDS: int = 15
+    EMAIL_OUTBOX_KEY_VERSION: str = "v1"
+    EMAIL_OUTBOX_KEYS: dict[str, SecretStr] = {}
     SMTP_HOST: str | None = None
     SMTP_USER: str | None = None
     SMTP_PASSWORD: str | None = None
@@ -86,6 +91,22 @@ class Settings(BaseSettings):
             self.EMAILS_FROM_NAME = self.PROJECT_NAME
         return self
 
+    @model_validator(mode="after")
+    def _validate_email_outbox(self) -> Self:
+        if not 1 <= self.SMTP_TIMEOUT_SECONDS <= 30:
+            raise ValueError("SMTP_TIMEOUT_SECONDS must be between 1 and 30")
+        if self.emails_enabled and (
+            self.EMAIL_OUTBOX_KEYS or self.FASTAPI_ENV != "development"
+        ):
+            if self.EMAIL_OUTBOX_KEY_VERSION not in self.EMAIL_OUTBOX_KEYS:
+                raise ValueError("Configure the active EMAIL_OUTBOX_KEYS entry")
+        for version, key in self.EMAIL_OUTBOX_KEYS.items():
+            if not version or len(version) > 32 or version == "development":
+                raise ValueError("Invalid email outbox key version")
+            Fernet(key.get_secret_value())
+        return self
+
+    EMAIL_INVITE_TOKEN_EXPIRE_HOURS: int = 48
     EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = 48
 
     @computed_field  # type: ignore[prop-decorator]

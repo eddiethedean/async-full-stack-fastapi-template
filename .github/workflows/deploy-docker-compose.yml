@@ -24,6 +24,8 @@ jobs:
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      EMAIL_OUTBOX_KEYS: ${{ secrets.EMAIL_OUTBOX_KEYS }}
+      EMAIL_OUTBOX_KEY_VERSION: ${{ vars.EMAIL_OUTBOX_KEY_VERSION }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}

@@ -127,3 +127,11 @@ Application (frontend and API): `https://fastapi-project.example.com`
 Interactive API docs: `https://fastapi-project.example.com/docs`
 
 Adminer: `https://adminer.fastapi-project.example.com`
+
+## Account email delivery
+
+The `email-worker` service uses the backend image. Run the migrations before
+starting the API and worker. Add `EMAIL_OUTBOX_KEYS` to deployment secrets and
+`EMAIL_OUTBOX_KEY_VERSION` to deployment variables when configuring SMTP. Both
+services read the same settings. See [account email delivery](./deployment.md#account-email-delivery)
+for key setup, rotation, and retry behavior.
