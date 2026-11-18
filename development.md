@@ -104,12 +104,15 @@ finished.
 For browser tests, select the isolated Compose files and a unique project name:
 
 ```bash
-export COMPOSE_PROJECT_NAME=asf-browser-local
-export COMPOSE_FILE=compose.yml:compose.test.yml
-docker compose build
-docker compose run --rm backend bash scripts/prestart.sh
-docker compose run --rm playwright bunx playwright test
-docker compose down --volumes --remove-orphans
+(
+    set -e
+    export COMPOSE_PROJECT_NAME="asf-browser-$(date +%s)-$$"
+    export COMPOSE_FILE=compose.yml:compose.test.yml
+    trap 'docker compose down --volumes --remove-orphans' EXIT
+    docker compose build
+    docker compose run --rm backend bash scripts/prestart.sh
+    docker compose run --rm playwright bunx playwright test
+)
 ```
 
 The browser test setup routes require an explicit development test setting and

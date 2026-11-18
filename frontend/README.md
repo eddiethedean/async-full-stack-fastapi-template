@@ -33,7 +33,7 @@ If you are developing an API-only app and want to remove the frontend, you can d
 
 - In the `backend/Dockerfile` file, remove the frontend build stage and the `COPY --from=frontend-build` instruction.
 
-- In the `compose.override.yml` file, remove the `playwright` service.
+- In the `compose.test.yml` file, remove the `playwright` service.
 
 - In the `.github/workflows/deploy.yml` file, remove the **Set up Bun**, **Install frontend dependencies**, and **Build frontend** steps.
 
@@ -93,30 +93,10 @@ The frontend code is structured as follows:
 
 ## End-to-End Testing with Playwright
 
-The frontend includes initial end-to-end tests using Playwright. To run the tests, you need to have the Docker Compose stack running. Start the stack with the following command:
-
-```bash
-docker compose run --rm backend bash scripts/prestart.sh
-docker compose up -d --wait backend
-```
-
-Then, you can run the tests with the following command:
-
-```bash
-bunx playwright test
-```
-
-You can also run your tests in UI mode to see the browser and interact with it running:
-
-```bash
-bunx playwright test --ui
-```
-
-To stop and remove the Docker Compose stack and clean the data created in tests, use the following command:
-
-```bash
-docker compose down -v
-```
+Use the [isolated browser test stack](../development.md#running-tests) for
+Playwright. It sets up a disposable database and enables the routes used to
+create test accounts. The setup also cleans up its own Compose project when the
+tests exit.
 
 To update the tests, navigate to the tests directory and modify the existing test files or add new ones as needed.
 
