@@ -2,6 +2,30 @@
 
 Deploy the project to [FastAPI Cloud](https://fastapicloud.com) with the included GitHub Actions workflow.
 
+## Release rehearsal
+
+Rehearse the upgrade on a private staging stack that uses the release image
+and a separate PostgreSQL database. Capture a restorable backup before the
+cutover and restore it only to staging for the rehearsal. Use a synthetic or
+approved scrubbed sample, and route staging mail to a capture service.
+
+1. Record the current application version and Alembic revision. Restore the
+   backup into the staging database and verify that accounts and items exist.
+2. Configure the frontend origin, TLS, and the email worker settings. Apply
+   `alembic upgrade head` once with the staging connection settings and run
+   `alembic check`. Confirm that the restored records survived.
+3. Start the new API and frontend together, then start the email worker.
+   Confirm HTTP readiness and worker processing. Sign in in the browser and
+   through the bearer API. Test recovery and invitation delivery. Previously
+   issued credentials should require a new login or reset request.
+4. Keep the backup and record the version, migration head, and test results
+   in the release notes. Repeat the verified sequence during the cutover.
+
+If validation fails, halt the rollout and isolate the affected service. Prefer a
+forward application fix that preserves the new authentication behavior. A
+restore discards writes made after the backup, so rehearse it before cutover
+and account for those writes before using it in production.
+
 ## Create the FastAPI Cloud Application
 
 Create an application in FastAPI Cloud and set its [Application Directory](https://fastapicloud.com/docs/builds-and-deployments/application-directory/) to `backend`.

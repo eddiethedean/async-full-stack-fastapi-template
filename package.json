@@ -12,5 +12,15 @@
     "test:ui": "bun run --filter frontend test:ui",
     "email:dev": "bun run --filter emails dev",
     "email:export": "bun run --filter emails export"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.13",
+    "browserslist": "4.29.6",
+    "engine.io": "6.6.11",
+    "fast-uri": "3.1.9",
+    "follow-redirects": "1.16.3",
+    "js-yaml": "4.3.2",
+    "seroval": "1.6.11",
+    "source-map-js": "1.2.2"
   }
 }

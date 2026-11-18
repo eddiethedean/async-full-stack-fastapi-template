@@ -4,6 +4,11 @@ You can deploy the project to your own remote server with Docker Compose. The de
 
 ## Preparation
 
+Follow the [release rehearsal](./deployment.md#release-rehearsal) on a separate
+Compose project and database. Use the production Compose files and an explicit
+staging environment file. After migrating the database, validate backend
+readiness and the email worker before promoting the same image to production.
+
 * Have a remote server ready and available.
 * Configure DNS records pointing to the server for the application domain and any supporting service subdomains you want to expose, such as `fastapi-project.example.com` and `adminer.fastapi-project.example.com`.
 * Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).

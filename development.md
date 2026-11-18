@@ -119,6 +119,24 @@ docker compose down --volumes --remove-orphans
 The browser test setup routes require an explicit development test setting and
 are excluded from the public client.
 
+The backend command checks Alembic schema drift. The Compose runner also
+rehearses the upgrade from the last release using a second disposable database
+with sample accounts and items. The Playwright workflow checks that regenerating
+the SDK and React Email exports produces no tracked changes.
+
+CI audits the locked Python dependencies and checks high and critical Bun
+advisories. The built production image is scanned for high and critical issues
+with fixes available. Any temporary exception should cite the advisory,
+affected component, owner, justification, and expiration date in a repository
+issue and keep the scanner exception scoped to that advisory.
+
+The [Picomatch exception](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+belongs to the project maintainer and is tracked in
+[issue #12](https://github.com/eddiethedean/async-full-stack-fastapi-template/issues/12).
+The affected package is used by the frontend build with repository-defined
+patterns. Remove the exception when a fix is available. It expires on
+December 18, 2026.
+
 ## Docker Compose Files and Environment Variables
 
 The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.

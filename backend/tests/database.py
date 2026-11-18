@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from pydantic import PostgresDsn, ValidationError
@@ -45,7 +46,7 @@ if __name__ == "__main__":
         raise SystemExit(str(exc)) from None
 
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        ["alembic", *(sys.argv[1:] or ["upgrade", "head"])],
         env={**os.environ, "DATABASE_URL": url, "FASTAPI_ENV": "development"},
         check=False,
     )

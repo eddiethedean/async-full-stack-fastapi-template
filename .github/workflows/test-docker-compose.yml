@@ -7,23 +7,60 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
 
   test-docker-compose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: compose.yml
+      COMPOSE_PROJECT_NAME: asf-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+      SECRET_KEY: compose-smoke-tests-only-secret-key
+      FIRST_SUPERUSER_PASSWORD: compose-smoke-tests-only-password
+      POSTGRES_PASSWORD: compose-smoke-tests-only-postgres
+      SMTP_HOST: ""
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: docker compose build
-      - run: docker compose down -v --remove-orphans
       - run: docker compose run --rm backend bash scripts/prestart.sh
-      - run: docker compose up -d --wait backend adminer
-      - name: Test backend is up
-        run: curl http://localhost:8000/api/v1/utils/health-check
-      - name: Test frontend is up
-        run: curl http://localhost:8000
-      - run: docker compose down -v --remove-orphans
+      - run: docker compose up -d --wait backend
+      - name: Verify the production runtime
+        run: |
+          docker compose exec -T backend python - <<'PY'
+          import json
+          import os
+          from urllib.request import Request, urlopen
+
+          assert os.getuid() != 0
+          base = "http://localhost:8000"
+          for path in ("/api/v1/utils/health-check/", "/api/v1/utils/readiness/"):
+              with urlopen(base + path, timeout=5) as response:
+                  assert response.status == 200, path
+          with urlopen(base + "/api/v1/openapi.json", timeout=5) as response:
+              assert "/api/v1/users/me" in json.load(response)["paths"]
+          for path in ("/", "/login", "/items"):
+              navigation = Request(base + path, headers={"Accept": "text/html"})
+              with urlopen(navigation, timeout=5) as response:
+                  assert response.headers.get_content_type() == "text/html", path
+                  assert b'<div id="root">' in response.read(), path
+          PY
+      - name: Scan the built image for fixable high and critical vulnerabilities
+        run: |
+          scan_dir=$(mktemp -d)
+          trap 'rm -rf "$scan_dir"' EXIT
+          image=$(docker compose images -q backend)
+          docker save --output "$scan_dir/backend.tar" "$image"
+          docker run --rm --volume "$scan_dir:/scan:ro" \
+            aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
+            image --input /scan/backend.tar --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1
+      - name: Remove smoke test stack
+        if: ${{ always() }}
+        run: docker compose down --volumes --remove-orphans

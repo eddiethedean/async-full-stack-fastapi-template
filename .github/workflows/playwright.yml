@@ -14,11 +14,17 @@ on:
 
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     # Set job outputs to values from filter step
     outputs:
       changed: ${{ steps.filter.outputs.changed }}
@@ -35,6 +41,13 @@ jobs:
           changed:
             - backend/**
             - frontend/**
+            - packages/react-email/**
+            - bun.lock
+            - uv.lock
+            - pyproject.toml
+            - package.json
+            - .python-version
+            - scripts/generate-client.sh
             - .env
             - compose*.yml
             - .github/workflows/playwright.yml
@@ -77,6 +90,16 @@ jobs:
     - run: bun ci
       working-directory: frontend
     - run: bash scripts/generate-client.sh
+    - name: Verify the generated SDK
+      run: |
+        git diff --exit-code -- frontend/src/client
+        test -z "$(git ls-files --others --exclude-standard -- frontend/src/client)"
+    - name: Verify the exported email templates
+      if: matrix.shardIndex == 1
+      run: |
+        bun run email:export
+        git diff --exit-code -- backend/app/email-templates
+        test -z "$(git ls-files --others --exclude-standard -- backend/app/email-templates)"
     - run: docker compose build
     - run: docker compose run --rm backend bash scripts/prestart.sh
     - name: Run Playwright tests
@@ -131,6 +154,7 @@ jobs:
   alls-green-playwright:  # This job does nothing and is only used for the branch protection
     if: always()
     needs:
+      - changes
       - test-playwright
     runs-on: ubuntu-latest
     timeout-minutes: 5
