@@ -1,9 +1,14 @@
+from collections.abc import AsyncIterator
+from typing import Annotated
+
 import anyio
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import literal
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.deps import SessionDep
 from app.core.db import engine
@@ -12,12 +17,24 @@ from app.core.db import engine
 @pytest.mark.anyio
 async def test_cancelled_request_returns_database_connection() -> None:
     app = FastAPI()
-    checked_out = engine.pool.checkedout  # type: ignore[attr-defined]
-    initial_connections = checked_out()
+    pool = engine.pool
+    assert isinstance(pool, AsyncAdaptedQueuePool)
+    initial_connections = pool.checkedout()
     query_finished = anyio.Event()
+    cleanup_finished = anyio.Event()
+
+    async def track_cleanup(session: SessionDep) -> AsyncIterator[AsyncSession]:
+        try:
+            yield session
+        finally:
+            # Exercise an await during teardown while the request is cancelled.
+            await anyio.lowlevel.checkpoint()
+            cleanup_finished.set()
 
     @app.get("/")
-    async def hold_connection(session: SessionDep) -> None:
+    async def hold_connection(
+        session: Annotated[AsyncSession, Depends(track_cleanup)],
+    ) -> None:
         await session.exec(select(literal(1)))
         query_finished.set()
         await anyio.sleep_forever()
@@ -29,10 +46,8 @@ async def test_cancelled_request_returns_database_connection() -> None:
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(client.get, "/")
                 await query_finished.wait()
-                assert checked_out() == initial_connections + 1
+                assert pool.checkedout() == initial_connections + 1
                 tasks.cancel_scope.cancel()
 
-        # The driver can finish returning the connection in its cleanup task.
-        with anyio.fail_after(5):
-            while checked_out() != initial_connections:
-                await anyio.sleep(0.01)
+        assert cleanup_finished.is_set()
+        assert pool.checkedout() == initial_connections
