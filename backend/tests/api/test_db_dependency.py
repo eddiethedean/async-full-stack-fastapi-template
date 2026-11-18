@@ -3,6 +3,7 @@ from typing import Annotated
 
 import anyio
 import pytest
+from anyio.lowlevel import checkpoint
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import literal
@@ -28,7 +29,7 @@ async def test_cancelled_request_returns_database_connection() -> None:
             yield session
         finally:
             # Exercise an await during teardown while the request is cancelled.
-            await anyio.lowlevel.checkpoint()
+            await checkpoint()
             cleanup_finished.set()
 
     @app.get("/")
