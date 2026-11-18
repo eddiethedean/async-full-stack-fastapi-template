@@ -2,6 +2,13 @@ import { AxiosError } from "axios"
 
 function extractErrorMessage(err: Error): string {
   if (err instanceof AxiosError) {
+    if (err.response?.status === 429) {
+      const seconds = Number(err.response.headers["retry-after"])
+      if (Number.isFinite(seconds) && seconds > 0) {
+        return `Too many attempts. Try again in ${Math.ceil(seconds)} seconds.`
+      }
+      return "Too many attempts. Please try again later."
+    }
     const errDetail = (err.response?.data as any)?.detail
     if (Array.isArray(errDetail) && errDetail.length > 0) {
       return errDetail[0].msg
