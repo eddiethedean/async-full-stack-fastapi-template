@@ -174,7 +174,7 @@ test("A late response from the previous account cannot sign out the next account
     await pendingRequest
 
     await page.getByTestId("user-menu").click()
-    await page.getByRole("menuitem", { name: "Log out" }).click()
+    await page.getByRole("menuitem", { name: "Log out" }).press("Enter")
     await expect(page).toHaveURL("/login")
     await fillForm(page, second, password)
     await page.getByRole("button", { name: "Log In" }).click()
