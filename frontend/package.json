@@ -9,8 +9,8 @@
     "lint": "biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true ./",
     "preview": "vite preview",
     "generate-client": "openapi-ts",
-    "test": "bunx playwright test",
-    "test:ui": "bunx playwright test --ui"
+    "test": "bash ../scripts/test-browser.sh",
+    "test:ui": "bash ../scripts/test-browser.sh --ui"
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.1",

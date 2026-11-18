@@ -7,7 +7,7 @@ export const createUser = async ({
   email: string
   password: string
 }) => {
-  const baseURL = process.env.VITE_API_URL ?? "http://localhost:8000"
+  const baseURL = process.env.PLAYWRIGHT_BASE_URL
   const response = await fetch(new URL("/api/v1/private/users/", baseURL), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
