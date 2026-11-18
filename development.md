@@ -20,7 +20,7 @@ uv run bash scripts/prestart.sh
 Start the FastAPI development server:
 
 ```bash
-uv run fastapi dev
+AUTH_COOKIE_SECURE=false uv run fastapi dev
 ```
 
 In another terminal, from the project root, install the frontend dependencies and start the Vite development server:
@@ -42,6 +42,8 @@ Mailpit: <http://localhost:8025>
 
 The frontend development server uses the backend at `http://localhost:8000`, as configured in `frontend/.env`.
 
+Use the same host name for both servers. The browser sends a session cookie to the API, and `localhost` and `127.0.0.1` count as different sites. `AUTH_COOKIE_SECURE=false` is a local HTTP opt-in and requires development mode.
+
 ### Frontend Served by FastAPI
 
 Build the frontend from the `frontend` directory:
@@ -52,10 +54,12 @@ bun run build
 
 The build is written to `backend/app/frontend` and served by FastAPI at <http://localhost:8000>. Rebuild the frontend after making frontend changes.
 
+When running the built frontend on local HTTP outside Docker, set `AUTH_TRUSTED_ORIGINS='["http://localhost:8000"]'` as well. Compose applies the local HTTP settings in its development override.
+
 On native Windows, async Psycopg requires a selector event loop. `fastapi dev` uses one with reload enabled. When running the server without reload, pass the loop explicitly from `backend`.
 
 ```bash
-uv run uvicorn app.main:app --loop asyncio:SelectorEventLoop
+AUTH_COOKIE_SECURE=false uv run uvicorn app.main:app --loop asyncio:SelectorEventLoop
 ```
 
 ## Full Stack with Docker Compose
@@ -136,6 +140,14 @@ docker compose watch
 The tracked `.env` file contains local development defaults, passwords, and other configuration. Its hostnames use `localhost` for processes running on your machine. Docker Compose overrides hostnames such as the database and SMTP server with their Compose service names.
 
 Do not store deployment secrets in `.env`. Configure them as described in the [FastAPI Cloud deployment guide](./deployment.md) or the [Docker Compose deployment guide](./deployment-docker-compose.md).
+
+## Authentication
+
+Browsers sign in at `POST /api/v1/auth/session`. The response sets an HttpOnly cookie and supplies a CSRF token for writes. `GET /api/v1/auth/session` restores the session after reload. Send `X-CSRF-Token` and an allowed `Origin` on cookie-authenticated writes, including `DELETE /api/v1/auth/session` and `POST /api/v1/auth/logout-all`. Adjust `BROWSER_SESSION_EXPIRE_MINUTES` to change the browser session lifetime.
+
+API clients can still use the OAuth2 bearer login. An explicit Authorization header takes precedence on protected API routes that support both mechanisms. An invalid bearer token returns 401 even when the client has a valid browser cookie. The browser session endpoint itself accepts only cookie credentials.
+
+Set `FRONTEND_HOST` to the deployed frontend's HTTPS origin. Additional trusted origins for CORS and browser writes can be configured as a JSON list in `AUTH_TRUSTED_ORIGINS`. Production cookies are Secure and host only.
 
 ## Pre-commit Hooks and Code Linting
 

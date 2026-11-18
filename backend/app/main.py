@@ -50,7 +50,7 @@ async def handle_duplicate_email(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_HOST],
+    allow_origins=settings.auth_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -64,6 +64,8 @@ services:
       - ./backend/htmlcov:/app/backend/htmlcov
     environment:
       FASTAPI_ENV: "development"
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_TRUSTED_ORIGINS: '["http://localhost:8000"]'
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
