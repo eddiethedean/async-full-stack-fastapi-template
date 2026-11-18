@@ -24,11 +24,13 @@ test("A denied refresh hides the cached user list without signing out", async ({
   await expect(page.getByRole("table").getByText(/@/).first()).toBeVisible()
   await page.getByRole("link", { name: "Dashboard" }).click()
 
-  await page.route("**/api/v1/users/", (route) =>
-    route.fulfill({
-      status: 403,
-      json: { detail: "The user doesn't have enough privileges" },
-    }),
+  await page.route(
+    (url) => url.pathname === "/api/v1/users/",
+    (route) =>
+      route.fulfill({
+        status: 403,
+        json: { detail: "The user doesn't have enough privileges" },
+      }),
   )
   await page.getByRole("link", { name: "Admin" }).click()
 
