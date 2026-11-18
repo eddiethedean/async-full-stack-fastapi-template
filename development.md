@@ -87,6 +87,32 @@ Stop a locally running FastAPI server before starting the Compose backend becaus
 
 [Mailpit](https://mailpit.axllent.org) captures emails sent during local development instead of delivering them. The local backend connects to it at `localhost:1025`, and the Compose backend connects to the `mailpit` service. Captured emails are available at <http://localhost:8025>.
 
+## Running Tests
+
+Run `bash scripts/test.sh` from the repository root to test against disposable
+PostgreSQL and Mailpit containers. It uses a distinct Compose project, allocates
+loopback ports, and removes the test volumes on exit. The regular development
+stack can stay up.
+
+To use your own disposable PostgreSQL instance, create a separate database named
+`asf_test_<name>`, set `TEST_DATABASE_URL` to that database, then run
+`uv run bash scripts/test.sh` from `backend`. The backend test command applies
+migrations and initializes test data. Direct `pytest` requires the database to
+be migrated first. Use a fresh test database for each run and remove it when
+finished.
+
+For browser tests, run one of these commands from the repository root:
+
+```bash
+bun run test
+bun run test:ui
+```
+
+Both commands start a disposable Compose project and remove its volumes on
+exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
+running tests that require sign-in. Playwright verifies test mode before signing
+in. The browser test setup routes are excluded from the public client.
+
 ## Docker Compose Files and Environment Variables
 
 The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.

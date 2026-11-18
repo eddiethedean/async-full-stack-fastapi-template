@@ -18,10 +18,10 @@ Run the affected tests and the pre-commit checks before submitting.
 uv run prek run --all-files
 ```
 
-Backend tests run from the `backend` directory.
+Run backend tests from the repository root with a disposable Compose database.
 
 ```bash
-uv run bash scripts/test.sh
+bash scripts/test.sh
 ```
 
 When changing dependencies, include the corresponding lockfile update and explain why the dependency is needed. Keep database operations asynchronous and run blocking work outside the event loop.
