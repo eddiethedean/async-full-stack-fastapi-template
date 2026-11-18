@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import useAuth from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
+import { usePrivateMutation } from "@/hooks/usePrivateMutation"
+import { privateQueryKey, useSession } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import { handleError } from "@/utils"
 
@@ -30,6 +32,7 @@ type FormData = z.infer<typeof formSchema>
 
 const UserInformation = () => {
   const queryClient = useQueryClient()
+  const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const [editMode, setEditMode] = useState(false)
   const { user: currentUser } = useAuth()
@@ -48,7 +51,7 @@ const UserInformation = () => {
     setEditMode(!editMode)
   }
 
-  const mutation = useMutation({
+  const mutation = usePrivateMutation({
     mutationFn: (data: UserUpdateMe) =>
       UsersService.updateUserMe({ body: data }),
     onSuccess: () => {
@@ -57,7 +60,12 @@ const UserInformation = () => {
     },
     onError: handleError.bind(showErrorToast),
     onSettled: () => {
-      queryClient.invalidateQueries()
+      queryClient.invalidateQueries({
+        queryKey: privateQueryKey(generation, "currentUser"),
+      })
+      queryClient.invalidateQueries({
+        queryKey: privateQueryKey(generation, "users"),
+      })
     },
   })
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from pydantic import EmailStr
+from pydantic import EmailStr, StrictInt
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -118,7 +118,8 @@ class Token(SQLModel):
 
 # Contents of JWT token
 class TokenPayload(SQLModel):
-    sub: str | None = None
+    sub: uuid.UUID
+    exp: StrictInt
 
 
 class NewPassword(SQLModel):

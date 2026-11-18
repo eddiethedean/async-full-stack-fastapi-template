@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
@@ -17,6 +17,8 @@ import {
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { LoadingButton } from "@/components/ui/loading-button"
 import useCustomToast from "@/hooks/useCustomToast"
+import { usePrivateMutation } from "@/hooks/usePrivateMutation"
+import { privateQueryKey, useSession } from "@/lib/auth"
 import { handleError } from "@/utils"
 
 interface DeleteUserProps {
@@ -27,6 +29,7 @@ interface DeleteUserProps {
 const DeleteUser = ({ id, onSuccess }: DeleteUserProps) => {
   const [isOpen, setIsOpen] = useState(false)
   const queryClient = useQueryClient()
+  const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const { handleSubmit } = useForm()
 
@@ -34,7 +37,7 @@ const DeleteUser = ({ id, onSuccess }: DeleteUserProps) => {
     await UsersService.deleteUser({ path: { user_id: id } })
   }
 
-  const mutation = useMutation({
+  const mutation = usePrivateMutation({
     mutationFn: deleteUser,
     onSuccess: () => {
       showSuccessToast("The user was deleted successfully")
@@ -43,7 +46,9 @@ const DeleteUser = ({ id, onSuccess }: DeleteUserProps) => {
     },
     onError: handleError.bind(showErrorToast),
     onSettled: () => {
-      queryClient.invalidateQueries()
+      queryClient.invalidateQueries({
+        queryKey: privateQueryKey(generation, "users"),
+      })
     },
   })
 

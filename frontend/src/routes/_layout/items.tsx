@@ -1,21 +1,13 @@
-import { useSuspenseQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { Search } from "lucide-react"
-import { Suspense } from "react"
 
 import { ItemsService } from "@/client"
 import { DataTable } from "@/components/Common/DataTable"
 import AddItem from "@/components/Items/AddItem"
 import { columns } from "@/components/Items/columns"
 import PendingItems from "@/components/Pending/PendingItems"
-
-function getItemsQueryOptions() {
-  return {
-    queryFn: async () =>
-      (await ItemsService.readItems({ query: { skip: 0, limit: 100 } })).data,
-    queryKey: ["items"],
-  }
-}
+import { privateQueryKey, useSession } from "@/lib/auth"
 
 export const Route = createFileRoute("/_layout/items")({
   component: Items,
@@ -28,8 +20,16 @@ export const Route = createFileRoute("/_layout/items")({
   }),
 })
 
-function ItemsTableContent() {
-  const { data: items } = useSuspenseQuery(getItemsQueryOptions())
+function ItemsTable() {
+  const { generation } = useSession()
+  const { data: items, error } = useQuery({
+    queryFn: async ({ signal }) =>
+      (await ItemsService.readItems({ signal })).data,
+    queryKey: privateQueryKey(generation, "items"),
+  })
+
+  if (!items && error) throw error
+  if (!items) return <PendingItems />
 
   if (items.data.length === 0) {
     return (
@@ -44,14 +44,6 @@ function ItemsTableContent() {
   }
 
   return <DataTable columns={columns} data={items.data} />
-}
-
-function ItemsTable() {
-  return (
-    <Suspense fallback={<PendingItems />}>
-      <ItemsTableContent />
-    </Suspense>
-  )
 }
 
 function Items() {

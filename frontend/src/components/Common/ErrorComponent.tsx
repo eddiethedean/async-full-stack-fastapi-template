@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router"
+import { isAxiosError } from "axios"
 import { Button } from "@/components/ui/button"
 
-const ErrorComponent = () => {
+const ErrorComponent = ({ error }: { error: unknown }) => {
+  const forbidden = isAxiosError(error) && error.response?.status === 403
   return (
     <div
       className="flex min-h-screen items-center justify-center flex-col p-4"
@@ -17,7 +19,9 @@ const ErrorComponent = () => {
       </div>
 
       <p className="text-lg text-muted-foreground mb-4 text-center z-10">
-        Something went wrong. Please try again.
+        {forbidden
+          ? "You don't have permission to access this resource."
+          : "Something went wrong. Please try again."}
       </p>
       <Link to="/">
         <Button>Go Home</Button>

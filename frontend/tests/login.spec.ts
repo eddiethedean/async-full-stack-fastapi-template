@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test"
 import { firstSuperuser, firstSuperuserPassword } from "./config.ts"
-import { randomPassword } from "./utils/random.ts"
+import { createUser } from "./utils/privateApi"
+import { randomEmail, randomItemTitle, randomPassword } from "./utils/random.ts"
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
@@ -114,4 +115,72 @@ test("Redirects to /login when token is wrong", async ({ page }) => {
   await page.goto("/settings")
   await page.waitForURL("/login")
   await expect(page).toHaveURL("/login")
+})
+
+test("A late response from the previous account cannot sign out the next account", async ({
+  page,
+}) => {
+  const first = randomEmail()
+  const second = randomEmail()
+  const password = randomPassword()
+  const title = randomItemTitle()
+  await createUser({ email: first, password })
+  await createUser({ email: second, password })
+
+  await page.goto("/login")
+  await fillForm(page, first, password)
+  await page.getByRole("button", { name: "Log In" }).click()
+  await page.getByRole("link", { name: "Items" }).click()
+  await page.getByRole("button", { name: "Add Item" }).click()
+  await page.getByLabel("Title").fill(title)
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText(title)).toBeVisible()
+
+  await page.getByTestId("user-menu").click()
+  await page.getByRole("menuitem", { name: "User Settings" }).click()
+
+  let releaseResponse = () => {}
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  await page.route("**/api/v1/users/me", async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback()
+    await responseGate
+    await route.fulfill({
+      status: 401,
+      json: { detail: "Could not validate credentials" },
+    })
+  })
+
+  try {
+    await page.getByRole("button", { name: "Edit", exact: true }).click()
+    await page.getByLabel("Full name").fill("Changed")
+    const pendingRequest = page.waitForRequest(
+      (request) =>
+        request.method() === "PATCH" && request.url().endsWith("/users/me"),
+    )
+    await page.getByRole("button", { name: "Save" }).click()
+    await pendingRequest
+
+    await page.getByTestId("user-menu").click()
+    await page.getByRole("menuitem", { name: "Log out" }).click()
+    await expect(page).toHaveURL("/login")
+    await fillForm(page, second, password)
+    await page.getByRole("button", { name: "Log In" }).click()
+    await page.getByRole("link", { name: "Items" }).click()
+
+    const response = page.waitForResponse(
+      (result) =>
+        result.request().method() === "PATCH" &&
+        result.url().endsWith("/users/me"),
+    )
+    releaseResponse()
+    await response
+
+    await expect(page.getByTestId("user-menu")).toContainText(second)
+    await expect(page.getByText(title)).toHaveCount(0)
+    await expect(page).toHaveURL("/items")
+  } finally {
+    releaseResponse()
+  }
 })
