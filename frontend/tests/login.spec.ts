@@ -190,7 +190,7 @@ test("A late response from the previous account cannot sign out the next account
 
     await expect(page.getByTestId("user-menu")).toContainText(second)
     await expect(page.getByText(title)).toHaveCount(0)
-    await expect(page).toHaveURL("/items")
+    await expect(page).toHaveURL((url) => url.pathname === "/items")
   } finally {
     releaseResponse()
   }
