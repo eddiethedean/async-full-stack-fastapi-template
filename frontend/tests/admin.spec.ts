@@ -17,6 +17,29 @@ test("Add User button is visible", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Add User" })).toBeVisible()
 })
 
+test("A denied refresh hides the cached user list without signing out", async ({
+  page,
+}) => {
+  await page.goto("/admin")
+  await expect(page.getByRole("table").getByText(/@/).first()).toBeVisible()
+  await page.getByRole("link", { name: "Dashboard" }).click()
+
+  await page.route("**/api/v1/users/", (route) =>
+    route.fulfill({
+      status: 403,
+      json: { detail: "The user doesn't have enough privileges" },
+    }),
+  )
+  await page.getByRole("link", { name: "Admin" }).click()
+
+  await expect(
+    page.getByText("You don't have permission to access this resource."),
+  ).toBeVisible()
+  await expect(page.getByRole("table")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Add User" })).toHaveCount(0)
+  await expect(page.getByTestId("user-menu")).toContainText(firstSuperuser)
+})
+
 test.describe("Admin user management", () => {
   test("Create a new user successfully", async ({ page }) => {
     await page.goto("/admin")
@@ -66,7 +89,7 @@ test.describe("Admin user management", () => {
     await expect(userRow.getByText("Superuser")).toBeVisible()
   })
 
-  test("Edit a user successfully", async ({ page }) => {
+  test("Edit a user after cancelling a draft", async ({ page }) => {
     await page.goto("/admin")
 
     const email = randomEmail()
@@ -85,12 +108,20 @@ test.describe("Admin user management", () => {
     await expect(page.getByRole("dialog")).not.toBeVisible()
 
     const userRow = page.getByRole("row").filter({ hasText: email })
+    const editUser = page.getByRole("menuitem", { name: "Edit User" })
+    const dialog = page.getByRole("dialog")
     await userRow.getByRole("button").click()
+    await editUser.click()
+    await dialog.getByLabel("Full Name").fill("Discarded name")
+    await dialog.getByLabel("Set Password").fill(randomPassword())
+    await dialog.getByRole("button", { name: "Cancel" }).click()
+    await expect(dialog).not.toBeVisible()
 
-    await page.getByRole("menuitem", { name: "Edit User" }).click()
-
-    await page.getByPlaceholder("Full name").fill(updatedName)
-    await page.getByRole("button", { name: "Save" }).click()
+    await editUser.click()
+    await expect(dialog.getByLabel("Full Name")).toHaveValue(originalName)
+    await expect(dialog.getByLabel("Set Password")).toHaveValue("")
+    await dialog.getByLabel("Full Name").fill(updatedName)
+    await dialog.getByRole("button", { name: "Save" }).click()
 
     await expect(page.getByText("User updated successfully")).toBeVisible()
     await expect(page.getByText(updatedName)).toBeVisible()
