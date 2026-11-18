@@ -35,6 +35,35 @@ export type Body_login_login_access_token = {
 };
 
 /**
+ * BrowserLogin
+ */
+export type BrowserLogin = {
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Password
+     */
+    password: string;
+};
+
+/**
+ * BrowserSession
+ */
+export type BrowserSession = {
+    user: UserPublic;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Csrf Token
+     */
+    csrf_token: string;
+};
+
+/**
  * HTTPValidationError
  */
 export type HTTPValidationError = {
@@ -319,6 +348,79 @@ export type ValidationError = {
         [key: string]: unknown;
     };
 };
+
+export type authDeleteBrowserSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/session';
+};
+
+export type authDeleteBrowserSessionResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type authDeleteBrowserSessionResponse = authDeleteBrowserSessionResponses[keyof authDeleteBrowserSessionResponses];
+
+export type authReadBrowserSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/session';
+};
+
+export type authReadBrowserSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: BrowserSession;
+};
+
+export type authReadBrowserSessionResponse = authReadBrowserSessionResponses[keyof authReadBrowserSessionResponses];
+
+export type authCreateBrowserSessionData = {
+    body: BrowserLogin;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/session';
+};
+
+export type authCreateBrowserSessionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authCreateBrowserSessionError = authCreateBrowserSessionErrors[keyof authCreateBrowserSessionErrors];
+
+export type authCreateBrowserSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: BrowserSession;
+};
+
+export type authCreateBrowserSessionResponse = authCreateBrowserSessionResponses[keyof authCreateBrowserSessionResponses];
+
+export type authLogoutAllData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/logout-all';
+};
+
+export type authLogoutAllResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type authLogoutAllResponse = authLogoutAllResponses[keyof authLogoutAllResponses];
 
 export type loginLoginAccessTokenData = {
     body: Body_login_login_access_token;

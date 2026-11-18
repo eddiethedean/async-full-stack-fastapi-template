@@ -45,6 +45,14 @@ test("Log in with valid email and password ", async ({ page }) => {
   await page.getByRole("button", { name: "Log In" }).click()
 
   await page.waitForURL("/")
+  const cookie = (await page.context().cookies()).find((cookie) =>
+    cookie.name.endsWith("asf_session"),
+  )
+  expect(cookie?.httpOnly).toBe(true)
+  expect(
+    await page.evaluate(() => localStorage.getItem("access_token")),
+  ).toBeNull()
+  await page.reload()
 
   await expect(
     page.getByText("Welcome back, nice to see you again!"),
@@ -107,11 +115,14 @@ test("Logged-out user cannot access protected routes", async ({ page }) => {
   await page.waitForURL("/login")
 })
 
-test("Redirects to /login when token is wrong", async ({ page }) => {
-  await page.goto("/settings")
-  await page.evaluate(() => {
-    localStorage.setItem("access_token", "invalid_token")
-  })
+test("Clearing the session cookie returns the browser to login", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await fillForm(page, firstSuperuser, firstSuperuserPassword)
+  await page.getByRole("button", { name: "Log In" }).click()
+  await page.waitForURL("/")
+  await page.context().clearCookies()
   await page.goto("/settings")
   await page.waitForURL("/login")
   await expect(page).toHaveURL("/login")

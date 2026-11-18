@@ -2,32 +2,35 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
 import {
-  type Body_login_login_access_token as AccessToken,
-  LoginService,
+  AuthService,
+  type BrowserLogin,
   type UserRegister,
   UsersService,
 } from "@/client"
 import {
   currentUserOptions,
   getSession,
-  replaceAccessToken,
+  replaceBrowserSession,
+  restoreBrowserSession,
+  setSigningOut,
   useSession,
 } from "@/lib/auth"
 import { handleError } from "@/utils"
 import useCustomToast from "./useCustomToast"
 
-const isLoggedIn = () => {
-  return getSession().accessToken !== null
+const isLoggedIn = async () => {
+  await restoreBrowserSession()
+  return getSession().browser !== null
 }
 
 const useAuth = () => {
   const navigate = useNavigate()
   const { showErrorToast } = useCustomToast()
-  const { accessToken, generation } = useSession()
+  const { browser, generation } = useSession()
 
   const { data: user } = useQuery({
     ...currentUserOptions(generation),
-    enabled: accessToken !== null,
+    enabled: browser !== null,
   })
 
   const signUpMutation = useMutation({
@@ -40,22 +43,35 @@ const useAuth = () => {
   })
 
   const loginMutation = useMutation({
-    mutationFn: (data: AccessToken) =>
-      LoginService.loginAccessToken({ body: data }),
+    mutationFn: (data: BrowserLogin) =>
+      AuthService.createBrowserSession({ body: data }),
     onSuccess: ({ data }) => {
       if (generation === getSession().generation) {
-        replaceAccessToken(data.access_token)
+        replaceBrowserSession(data, true)
         void navigate({ to: "/" })
       }
     },
     onError: handleError.bind(showErrorToast),
   })
 
-  const logout = () => {
-    if (generation === getSession().generation) {
-      replaceAccessToken(null)
-      void navigate({ to: "/login", replace: true })
+  const logout = async () => {
+    if (generation !== getSession().generation || getSession().signingOut)
+      return
+    setSigningOut(true)
+    try {
+      await AuthService.deleteBrowserSession()
+    } catch (error) {
+      if (generation === getSession().generation) {
+        setSigningOut(false)
+        if (error instanceof Error) {
+          handleError.call(showErrorToast, error)
+        }
+      }
+      return
     }
+    if (generation !== getSession().generation) return
+    replaceBrowserSession(null, true)
+    void navigate({ to: "/login", replace: true })
   }
 
   return {
