@@ -1,4 +1,4 @@
-import { test as setup } from "@playwright/test"
+import { expect, test as setup } from "@playwright/test"
 import { firstSuperuser, firstSuperuserPassword } from "./config.ts"
 
 const authFile = "playwright/.auth/user.json"
@@ -9,5 +9,14 @@ setup("authenticate", async ({ page }) => {
   await page.getByTestId("password-input").fill(firstSuperuserPassword)
   await page.getByRole("button", { name: "Log In" }).click()
   await page.waitForURL("/")
+  const cookies = await page.context().cookies()
+  expect(cookies).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: expect.stringMatching(/asf_session$/),
+        httpOnly: true,
+      }),
+    ]),
+  )
   await page.context().storageState({ path: authFile })
 })
