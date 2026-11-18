@@ -2,6 +2,12 @@
 
 ## Latest Changes
 
+### Async Full Stack FastAPI
+
+* Upgrade FastAPI to 0.164 and Pydantic to 2.14. The app keeps the existing
+  login form contract and still serves the built frontend through FastAPI.
+  FastAPI can export OpenTelemetry when explicitly configured.
+
 ### Fixes
 
 * 🐛 Fix Sonner toast theme sync. PR [#2450](https://github.com/fastapi/full-stack-fastapi-template/pull/2450) by [@chris-bs23](https://github.com/chris-bs23).
