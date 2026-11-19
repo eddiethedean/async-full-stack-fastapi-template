@@ -5,6 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models import User
+from tests.utils.utils import random_email
 
 pytestmark = pytest.mark.anyio
 
@@ -23,7 +24,7 @@ async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
     r = await client.post(
         f"{settings.API_V1_STR}/private/users/",
         json={
-            "email": "pollo@listo.com",
+            "email": "pollo@LISTO.COM",
             "password": "password123",
             "full_name": "Pollo Listo",
         },
@@ -38,3 +39,37 @@ async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
     assert user
     assert user.email == "pollo@listo.com"
     assert user.full_name == "Pollo Listo"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("email", "invalid-email-fixture"),
+        ("password", "short"),
+        ("full_name", "x" * 256),
+    ],
+)
+async def test_create_user_rejects_invalid_fixture(
+    client: AsyncClient,
+    db: AsyncSession,
+    superuser_token_headers: dict[str, str],
+    field: str,
+    value: str,
+) -> None:
+    data = {
+        "email": random_email(),
+        "password": "test-fixture-123",
+        "full_name": "Fixture",
+    }
+    data[field] = value
+
+    response = await client.post(f"{settings.API_V1_STR}/private/users/", json=data)
+
+    assert response.status_code == 422
+    assert (
+        await db.exec(select(User).where(User.email == data["email"]))
+    ).first() is None
+    response = await client.get(
+        f"{settings.API_V1_STR}/users/", headers=superuser_token_headers
+    )
+    assert response.status_code == 200

@@ -17,11 +17,15 @@ router = APIRouter(prefix="/utils", tags=["utils"])
     "/test-email/",
     dependencies=[Depends(get_current_active_superuser)],
     status_code=201,
+    responses={503: {"description": "Email delivery is unavailable"}},
 )
 def test_email(email_to: EmailStr) -> Message:
     """
     Test emails.
     """
+    if not settings.emails_enabled:
+        raise HTTPException(status_code=503, detail="Email delivery is unavailable")
+
     email_data = generate_test_email(email_to=email_to)
     send_email(
         email_to=email_to,

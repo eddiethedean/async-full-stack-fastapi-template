@@ -966,6 +966,10 @@ export type utilsTestEmailErrors = {
      * Validation Error
      */
     422: HTTPValidationError;
+    /**
+     * Email delivery is unavailable
+     */
+    503: unknown;
 };
 
 export type utilsTestEmailError = utilsTestEmailErrors[keyof utilsTestEmailErrors];
