@@ -10,10 +10,9 @@ services:
       - "127.0.0.1::5432"
 
   backend:
-    build:
-      target: development
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     build:
+      target: development
       args:
         VITE_API_URL: ""
     environment:
