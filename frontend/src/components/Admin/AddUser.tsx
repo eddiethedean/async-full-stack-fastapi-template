@@ -30,12 +30,13 @@ import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import useCustomToast from "@/hooks/useCustomToast"
 import { usePrivateMutation } from "@/hooks/usePrivateMutation"
+import { accountEmail } from "@/lib/account-email"
 import { privateQueryKey, useSession } from "@/lib/auth"
 import { handleError } from "@/utils"
 
 const formSchema = z
   .object({
-    email: z.email({ message: "Invalid email address" }),
+    email: accountEmail,
     full_name: z.string().optional(),
     invite: z.boolean(),
     password: z.string(),
@@ -143,7 +144,7 @@ const AddUser = () => {
                     <FormControl>
                       <Input
                         placeholder="Email"
-                        type="email"
+                        inputMode="email"
                         {...field}
                         required
                       />
