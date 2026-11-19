@@ -194,7 +194,7 @@ export class LoginService {
     /**
      * Recover Password Html Content
      *
-     * HTML Content for Password Recovery
+     * Return the preview with an RFC 2047 Subject header for non-ASCII text.
      */
     public static recoverPasswordHtmlContent<ThrowOnError extends boolean = true>(options: Options<loginRecoverPasswordHtmlContentData, ThrowOnError>) {
         return (options.client ?? client).post<loginRecoverPasswordHtmlContentResponses, loginRecoverPasswordHtmlContentErrors, ThrowOnError>({
