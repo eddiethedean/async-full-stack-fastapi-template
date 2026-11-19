@@ -235,6 +235,9 @@ test("User can switch between theme modes", async ({ page }) => {
 })
 
 test("Selected mode is preserved across sessions", async ({ page }) => {
+  // This test revokes its own session. Keep the setup cookie valid for other tests.
+  await page.context().clearCookies()
+  await logInUser(page, firstSuperuser, firstSuperuserPassword)
   await page.goto("/settings")
 
   await page.getByTestId("theme-button").click()

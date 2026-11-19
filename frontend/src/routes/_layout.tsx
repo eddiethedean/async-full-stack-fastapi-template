@@ -12,14 +12,16 @@ import {
   currentUserOptions,
   getSession,
   queryClient,
+  restoreBrowserSession,
   useSession,
 } from "@/lib/auth"
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
   beforeLoad: async () => {
-    const { accessToken, generation } = getSession()
-    if (!accessToken) throw redirect({ to: "/login" })
+    await restoreBrowserSession()
+    const { browser, generation } = getSession()
+    if (!browser) throw redirect({ to: "/login" })
 
     try {
       const user = await queryClient.fetchQuery(currentUserOptions(generation))
@@ -36,9 +38,9 @@ export const Route = createFileRoute("/_layout")({
 })
 
 function Layout() {
-  const { accessToken, generation } = useSession()
+  const { browser, generation, signingOut } = useSession()
   const context = Route.useRouteContext()
-  if (!accessToken || generation !== context.generation) return null
+  if (!browser || signingOut || generation !== context.generation) return null
 
   return (
     <SidebarProvider key={generation}>

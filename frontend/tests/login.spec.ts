@@ -45,6 +45,14 @@ test("Log in with valid email and password ", async ({ page }) => {
   await page.getByRole("button", { name: "Log In" }).click()
 
   await page.waitForURL("/")
+  const cookie = (await page.context().cookies()).find((cookie) =>
+    cookie.name.endsWith("asf_session"),
+  )
+  expect(cookie?.httpOnly).toBe(true)
+  expect(
+    await page.evaluate(() => localStorage.getItem("access_token")),
+  ).toBeNull()
+  await page.reload()
 
   await expect(
     page.getByText("Welcome back, nice to see you again!"),
@@ -82,9 +90,14 @@ test("Successful log out", async ({ page }) => {
     page.getByText("Welcome back, nice to see you again!"),
   ).toBeVisible()
 
+  const canClearCookie = await page.evaluate(() => Boolean(navigator.locks))
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out" }).click()
   await page.waitForURL("/login")
+  const cookies = await page.context().cookies()
+  expect(cookies.some((cookie) => cookie.name.endsWith("asf_session"))).toBe(
+    !canClearCookie,
+  )
 })
 
 test("Logged-out user cannot access protected routes", async ({ page }) => {
@@ -107,11 +120,14 @@ test("Logged-out user cannot access protected routes", async ({ page }) => {
   await page.waitForURL("/login")
 })
 
-test("Redirects to /login when token is wrong", async ({ page }) => {
-  await page.goto("/settings")
-  await page.evaluate(() => {
-    localStorage.setItem("access_token", "invalid_token")
-  })
+test("Clearing the session cookie returns the browser to login", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await fillForm(page, firstSuperuser, firstSuperuserPassword)
+  await page.getByRole("button", { name: "Log In" }).click()
+  await page.waitForURL("/")
+  await page.context().clearCookies()
   await page.goto("/settings")
   await page.waitForURL("/login")
   await expect(page).toHaveURL("/login")
@@ -134,7 +150,8 @@ for (const switchInAnotherTab of [false, true]) {
       await page.addInitScript(() => {
         // Hold back the storage notification so the first tab still has the old session.
         window.addEventListener("storage", (event) => {
-          if (event.key === "access_token") event.stopImmediatePropagation()
+          if (event.key === "asf-session-change")
+            event.stopImmediatePropagation()
         })
       })
     }

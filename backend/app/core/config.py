@@ -1,8 +1,10 @@
 import warnings
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     EmailStr,
+    Field,
     HttpUrl,
     PostgresDsn,
     computed_field,
@@ -28,6 +30,35 @@ class Settings(BaseSettings):
     FRONTEND_HOST: str = "http://localhost:5173"
     FASTAPI_ENV: Literal["development"] | None = None
     ENABLE_TEST_ROUTES: bool = False
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_TRUSTED_ORIGINS: list[str] = Field(default_factory=list)
+    BROWSER_SESSION_EXPIRE_MINUTES: int = Field(default=60 * 24 * 8, gt=0)
+
+    @property
+    def auth_origins(self) -> list[str]:
+        return list(
+            dict.fromkeys(
+                origin.rstrip("/")
+                for origin in [self.FRONTEND_HOST, *self.AUTH_TRUSTED_ORIGINS]
+            )
+        )
+
+    @model_validator(mode="after")
+    def _validate_browser_auth(self) -> Self:
+        if not self.AUTH_COOKIE_SECURE and self.FASTAPI_ENV != "development":
+            raise ValueError("AUTH_COOKIE_SECURE can be disabled only in development")
+        for origin in self.auth_origins:
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme not in ("http", "https")
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("Browser auth requires explicit HTTP or HTTPS origins")
+        return self
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
