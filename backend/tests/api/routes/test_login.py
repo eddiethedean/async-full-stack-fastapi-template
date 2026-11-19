@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from email.message import EmailMessage
 from unittest.mock import patch
 from uuid import UUID
 
@@ -149,6 +150,37 @@ async def test_recovery_password(
         )
     ).first()
     assert job and job.kind == "password_reset" and job.payload
+
+
+@pytest.mark.parametrize("local_part_prefix", ["", "田中"])
+async def test_recovery_html_preview_subject(
+    client: AsyncClient,
+    db: AsyncSession,
+    superuser_token_headers: dict[str, str],
+    local_part_prefix: str,
+) -> None:
+    email = f"{local_part_prefix}{random_email()}"
+    await create_user(
+        session=db, user_create=UserCreate(email=email, password=random_lower_string())
+    )
+
+    response = await client.post(
+        f"{settings.API_V1_STR}/password-recovery-html-content/{email}",
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    assert email in response.text
+    assert "preview-only" in response.text
+    subject = response.headers["subject"]
+    assert subject.isascii()
+    assert "\r" not in subject and "\n" not in subject
+    expected_subject = f"{settings.PROJECT_NAME} - Password recovery for user {email}"
+    if not local_part_prefix:
+        assert subject == expected_subject
+    message = EmailMessage()
+    message["Subject"] = subject
+    assert str(message["Subject"]) == expected_subject
 
 
 async def test_recovery_password_user_not_exits(

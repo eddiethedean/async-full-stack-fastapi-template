@@ -19,13 +19,14 @@ import { LoadingButton } from "@/components/ui/loading-button"
 import useAuth from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
 import { usePrivateMutation } from "@/hooks/usePrivateMutation"
+import { accountEmail } from "@/lib/account-email"
 import { privateQueryKey, useSession } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import { handleError } from "@/utils"
 
 const formSchema = z.object({
   full_name: z.string().max(255).optional(),
-  email: z.email({ message: "Invalid email address" }),
+  email: accountEmail,
 })
 
 type FormData = z.infer<typeof formSchema>
@@ -138,7 +139,7 @@ const UserInformation = () => {
                 <FormItem>
                   <FormLabel>Email</FormLabel>
                   <FormControl>
-                    <Input type="email" {...field} />
+                    <Input inputMode="email" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

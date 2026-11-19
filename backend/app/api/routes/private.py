@@ -1,15 +1,10 @@
-from typing import Any
-
 from fastapi import APIRouter
-from pydantic import BaseModel
+from sqlmodel import Field
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import SessionDep
 from app.core.security import get_password_hash
-from app.models import (
-    User,
-    UserPublic,
-)
+from app.models import User, UserPublic, UserRegister
 
 router = APIRouter(tags=["private"], prefix="/private")
 
@@ -19,15 +14,13 @@ def test_mode() -> dict[str, bool]:
     return {"test_mode": True}
 
 
-class PrivateUserCreate(BaseModel):
-    email: str
-    password: str
-    full_name: str
+class PrivateUserCreate(UserRegister):
+    full_name: str = Field(max_length=255)
     is_verified: bool = False
 
 
 @router.post("/users/", response_model=UserPublic)
-async def create_user(user_in: PrivateUserCreate, session: SessionDep) -> Any:
+async def create_user(user_in: PrivateUserCreate, session: SessionDep) -> User:
     """
     Create a new user.
     """
