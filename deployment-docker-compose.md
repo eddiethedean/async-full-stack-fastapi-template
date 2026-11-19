@@ -4,6 +4,11 @@ You can deploy the project to your own remote server with Docker Compose. The de
 
 ## Preparation
 
+Follow the [release rehearsal](./deployment.md#release-rehearsal) on a separate
+Compose project and database. Use the production Compose files and an explicit
+staging environment file. After migrating the database, validate backend
+readiness and the email worker before promoting the image to production.
+
 * Have a remote server ready and available.
 * Configure DNS records pointing to the server for the application domain and any supporting service subdomains you want to expose, such as `fastapi-project.example.com` and `adminer.fastapi-project.example.com`.
 * Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).
@@ -51,10 +56,17 @@ To use an authenticated email provider, also set `SMTP_PASSWORD`.
 
 ```bash
 cd /root/code/app/
-docker compose -f compose.yml -f compose.deploy.yml build
-docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
-docker compose -f compose.yml -f compose.deploy.yml up -d
+export BACKEND_IMAGE="asf-backend:release-$(date -u +%Y%m%dT%H%M%SZ)"
+docker compose -f compose.yml -f compose.deploy.yml build backend
+bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
+docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
+docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
+docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
+docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
 ```
+
+To promote the rehearsed image, load it onto the production host, set
+`BACKEND_IMAGE` to its loaded tag, and begin with the scan command.
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
 
@@ -72,6 +84,10 @@ addresses. Include the Traefik ingress address when Traefik serves the API.
 ## Deploy with GitHub Actions
 
 Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
+
+The workflow gives each build a unique image tag and scans the image on the
+deployment host before migrations. The API and worker start from that same
+local image.
 
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 

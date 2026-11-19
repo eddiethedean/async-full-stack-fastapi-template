@@ -4,6 +4,16 @@
 
 ### Async Full Stack FastAPI
 
+* Sign in again after installing this release. Bearer credentials are now tied
+  to revocable sessions and previously issued password reset links need to be
+  requested again. The browser uses cookies with CSRF protection and API
+  clients can still request bearer credentials.
+* Run the database migrations before starting the updated API and email worker.
+  Configure the mail worker and outbox keys before enabling account emails.
+  See the [release rehearsal](./deployment.md#release-rehearsal).
+* The recovery endpoint that accepts an email in the path is deprecated. New
+  clients should send the email in the request body.
+
 * Upgrade FastAPI to 0.164 and Pydantic to 2.14. The app keeps the existing
   login form contract and still serves the built frontend through FastAPI.
   FastAPI can export OpenTelemetry when explicitly configured.

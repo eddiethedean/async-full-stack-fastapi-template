@@ -45,7 +45,7 @@ services:
       - traefik.http.services.adminer.loadbalancer.server.port=8080
 
   backend:
-    image: backend:latest
+    image: ${BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
         condition: service_healthy
@@ -114,7 +114,7 @@ services:
       - traefik.http.routers.backend-http.entrypoints=http
 
   email-worker:
-    image: backend:latest
+    image: ${BACKEND_IMAGE:-backend:latest}
     build: *app-build
     depends_on:
       db:

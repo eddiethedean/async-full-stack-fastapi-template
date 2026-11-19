@@ -91,7 +91,7 @@ async def queue_recovery(email: str, session: SessionDep, request: Request) -> M
             token = issue_account_action(
                 session, user, purpose="password_reset", expires_delta=expires_delta
             )
-            enqueue_email(
+            await enqueue_email(
                 session,
                 kind="password_reset",
                 recipient=user.email,

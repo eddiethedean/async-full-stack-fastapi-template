@@ -16,6 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     env:
+      BACKEND_IMAGE: asf-backend:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
@@ -51,10 +52,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Build
-        run: docker compose -f compose.yml -f compose.deploy.yml build
+        run: docker compose -f compose.yml -f compose.deploy.yml build backend
+      - name: Scan the deployment image
+        run: bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
+      - name: Pull supporting service images
+        run: docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
       - name: Start database
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait db
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
       - name: Migrate and initialize database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps backend bash scripts/prestart.sh
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
       - name: Start application
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never

@@ -69,7 +69,7 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     hashed_password = await run_in_threadpool(get_password_hash, user_in.password)
     user = User.model_validate(user_in, update={"hashed_password": hashed_password})
     if settings.emails_enabled:
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient=user.email,
@@ -104,7 +104,7 @@ async def invite_user(session: SessionDep, user_in: UserInvite) -> User:
     token = issue_account_action(
         session, user, purpose="invite", expires_delta=expires_delta
     )
-    enqueue_email(
+    await enqueue_email(
         session,
         kind="invite",
         recipient=user.email,

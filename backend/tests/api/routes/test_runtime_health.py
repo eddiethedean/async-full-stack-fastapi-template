@@ -132,7 +132,7 @@ async def test_maintenance_clears_expired_tokens_and_mail_payloads(
                 expires_at=expired,
             )
         )
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="password_reset",
             recipient=user.email,

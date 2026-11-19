@@ -2,7 +2,7 @@ import base64
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from cryptography.fernet import Fernet
@@ -75,7 +75,7 @@ def get_cipher(key_version: str) -> Fernet:
     raise ValueError("Email outbox key unavailable")
 
 
-def enqueue_email(
+async def enqueue_email(
     session: AsyncSession,
     *,
     kind: EmailKind,
@@ -84,7 +84,7 @@ def enqueue_email(
     token: str | None = None,
     expires_delta: timedelta = timedelta(hours=48),
 ) -> None:
-    now = datetime.now(UTC)
+    now = await database_now(session)
     key_version = active_key() if token is not None else None
     session.add(
         EmailOutbox(

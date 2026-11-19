@@ -22,7 +22,13 @@ ENV PYTHONUNBUFFERED=1 \
     WEB_CONCURRENCY=4
 
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends --only-upgrade zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes pip \
+    && rm -rf /usr/local/lib/python3.14/ensurepip \
+    && groupadd --system app \
+    && useradd --system --gid app --home-dir /app app
 
 COPY pyproject.toml uv.lock ./
 COPY backend/pyproject.toml backend/alembic.ini ./backend/

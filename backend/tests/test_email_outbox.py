@@ -38,7 +38,7 @@ async def empty_outbox() -> None:
 async def test_rollback_discards_pending_email() -> None:
     key = uuid4().hex
     async with create_session() as session:
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient="outbox@example.com",
@@ -56,7 +56,7 @@ async def test_rollback_discards_pending_email() -> None:
 
 async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="outbox@example.com",
@@ -118,7 +118,7 @@ async def test_worker_renews_lease_during_delivery(
     monkeypatch.setattr("app.email_worker.renew_email_lease", track_renewal)
     monkeypatch.setattr("app.email_worker.LEASE_RENEW_INTERVAL", 0.01)
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient="slow-delivery@example.com",
@@ -152,7 +152,7 @@ async def test_worker_retries_transient_smtp_error(
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     key = uuid4().hex
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient="retry@example.com",
@@ -188,7 +188,7 @@ async def test_worker_renders_credential_before_delivery(
 
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind=kind,
             recipient=email,
@@ -203,7 +203,7 @@ async def test_worker_renders_credential_before_delivery(
 
 async def test_worker_drops_expired_credential() -> None:
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="expired@example.com",
@@ -226,7 +226,7 @@ async def test_worker_marks_permanent_delivery_failure(
 
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="unavailable@example.com",

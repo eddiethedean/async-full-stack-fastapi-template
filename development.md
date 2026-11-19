@@ -117,6 +117,27 @@ exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
 running tests that require sign-in. Playwright verifies test mode before signing
 in. The browser test setup routes are excluded from the public client.
 
+The backend command checks Alembic schema drift. The Compose runner also
+rehearses the upgrade from the last release using a second disposable database
+with a sample account and item. The check signs in to the upgraded account over
+both transports, reads the existing item, queues recovery mail, and verifies the
+recovery limit. The Playwright workflow checks that regenerating the SDK and
+React Email exports produces no tracked changes.
+
+CI audits the locked Python dependencies and checks high and critical Bun
+advisories. The built production image is scanned for high and critical issues
+with fixes available. The production smoke test also checks that the worker
+delivers a recovery email to Mailpit. Any temporary exception should cite the
+advisory, affected component, owner, justification, and expiration date in a
+repository issue and keep the scanner exception scoped to that advisory.
+
+The [Picomatch exception](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+belongs to the project maintainer and is tracked in
+[issue #12](https://github.com/eddiethedean/async-full-stack-fastapi-template/issues/12).
+The affected package is used by the frontend build with repository-defined
+patterns. Remove the exception when a fix is available. It expires on
+December 18, 2026.
+
 ## Docker Compose Files and Environment Variables
 
 The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.
