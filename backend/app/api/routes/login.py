@@ -96,6 +96,7 @@ async def queue_recovery(email: str, session: SessionDep, request: Request) -> M
                 kind="password_reset",
                 recipient=user.email,
                 deduplication_key=f"reset:{hashlib.sha256(token.encode()).hexdigest()}",
+                user_id=user.id,
                 token=token,
                 expires_delta=expires_delta,
             )

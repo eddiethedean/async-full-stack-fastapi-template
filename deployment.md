@@ -139,6 +139,10 @@ twice with the same message ID and the same single-use link. Check the
 Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
 
+Deleting an account cancels its queued email, clears queued credentials, and
+prevents further retries. The worker may finish an email it already claimed
+for delivery.
+
 ## Authentication rate limits
 
 The API counts login (cookie and bearer), signup, and recovery requests in

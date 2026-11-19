@@ -31,6 +31,9 @@ class EmailOutbox(SQLModel, table=True):
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID | None = Field(
+        default=None, foreign_key="user.id", ondelete="SET NULL", index=True
+    )
     kind: str = Field(max_length=24)
     recipient: str = Field(max_length=255)
     deduplication_key: str = Field(max_length=128, unique=True)
@@ -86,6 +89,7 @@ async def enqueue_email(
     kind: EmailKind,
     recipient: str,
     deduplication_key: str,
+    user_id: uuid.UUID | None = None,
     token: str | None = None,
     expires_delta: timedelta = timedelta(hours=48),
 ) -> None:
@@ -93,6 +97,7 @@ async def enqueue_email(
     key_version = active_key() if token is not None else None
     session.add(
         EmailOutbox(
+            user_id=user_id,
             kind=kind,
             recipient=recipient,
             deduplication_key=deduplication_key,

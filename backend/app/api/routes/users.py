@@ -69,11 +69,13 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     hashed_password = await run_in_threadpool(get_password_hash, user_in.password)
     user = User.model_validate(user_in, update={"hashed_password": hashed_password})
     if settings.emails_enabled:
+        await crud.flush_user(session, user)
         await enqueue_email(
             session,
             kind="welcome",
             recipient=user.email,
             deduplication_key=f"welcome:{user.id}",
+            user_id=user.id,
         )
     return await crud.commit_user(session, user)
 
@@ -109,6 +111,7 @@ async def invite_user(session: SessionDep, user_in: UserInvite) -> User:
         kind="invite",
         recipient=user.email,
         deduplication_key=f"invite:{user.id}",
+        user_id=user.id,
         token=token,
         expires_delta=expires_delta,
     )

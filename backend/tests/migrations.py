@@ -3,7 +3,7 @@
 import asyncio
 import os
 import subprocess
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine, text
@@ -12,6 +12,7 @@ from sqlmodel import select
 from tests.database import test_database_url
 
 BASELINE_REVISION = "fe56fa70289e"
+OUTBOX_BASELINE_REVISION = "1c89be4a2070"
 USER_ID = UUID("00000000-0000-4000-8000-000000000001")
 ITEM_ID = UUID("00000000-0000-4000-8000-000000000002")
 EMAIL = "migration@example.com"
@@ -106,6 +107,36 @@ def verify_populated_upgrade() -> None:
                     "owner": USER_ID,
                 },
             )
+        migrate("upgrade", OUTBOX_BASELINE_REVISION)
+        legacy_reset_digest = "a" * 64
+        legacy_jobs = {
+            f"welcome:{USER_ID}": "welcome",
+            f"reset:{legacy_reset_digest}": "password_reset",
+            f"invite:{uuid4()}": "invite",
+        }
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO accountactiontoken "
+                    "(id, user_id, purpose, digest, auth_version, created_at, expires_at) "
+                    "VALUES (:id, :user_id, 'password_reset', :digest, 0, now(), "
+                    "now() + interval '1 hour')"
+                ),
+                {"id": uuid4(), "user_id": USER_ID, "digest": legacy_reset_digest},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO email_outbox "
+                    "(id, kind, recipient, deduplication_key, payload, key_version, "
+                    "attempts, created_at, available_at, expires_at) "
+                    "VALUES (:id, :kind, 'legacy-recipient@example.com', :key, "
+                    ":payload, 'development', 0, now(), now(), now() + interval '1 hour')"
+                ),
+                [
+                    {"id": uuid4(), "kind": kind, "key": key, "payload": b"legacy"}
+                    for key, kind in legacy_jobs.items()
+                ],
+            )
         migrate("upgrade", "head")
         migrate("check")
         with engine.connect() as conn:
@@ -123,6 +154,20 @@ def verify_populated_upgrade() -> None:
             ).one()
             assert owner == USER_ID
             assert title == "Item from the previous release"
+            jobs = conn.execute(
+                text(
+                    "SELECT kind, user_id, failed_at, payload, last_error "
+                    "FROM email_outbox"
+                )
+            ).all()
+            assert len(jobs) == len(legacy_jobs)
+            for kind, user_id, failed_at, payload, last_error in jobs:
+                if kind == "invite":
+                    assert user_id is None and failed_at is not None
+                    assert payload is None and last_error == "account_unavailable"
+                else:
+                    assert user_id == USER_ID and failed_at is None
+                    assert payload == b"legacy" and last_error is None
     finally:
         engine.dispose()
     asyncio.run(verify_upgraded_application())
