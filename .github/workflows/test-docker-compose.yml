@@ -40,6 +40,25 @@ jobs:
           printf '::add-mask::%s\n' "$keys"
           printf 'EMAIL_OUTBOX_KEYS=%s\n' "$keys" >> "$GITHUB_ENV"
       - run: docker compose build backend
+      - name: Verify the manual deployment without mail
+        run: |
+          unset SMTP_HOST SMTP_PORT SMTP_TLS SMTP_SSL SMTP_USER SMTP_PASSWORD EMAILS_FROM_EMAIL EMAIL_OUTBOX_KEYS
+          export DOMAIN=smoke.example.com PROJECT_NAME="Compose smoke test" FIRST_SUPERUSER=admin@example.com
+          compose=(docker compose --env-file /dev/null --project-name "${COMPOSE_PROJECT_NAME}-no-mail" -f compose.yml -f compose.deploy.yml)
+          trap '"${compose[@]}" down --volumes --remove-orphans' EXIT
+          "${compose[@]}" run --rm --no-deps --pull never backend python -c 'from app.core.config import settings; assert not settings.emails_enabled'
+          SMTP_HOST=smtp.example.com "${compose[@]}" config --format json | python -c '
+          import json
+          import sys
+
+          services = json.load(sys.stdin)["services"]
+          for name in ("backend", "email-worker"):
+              env = services[name]["environment"]
+              assert env["SMTP_HOST"] == "smtp.example.com"
+              assert env["SMTP_PORT"] == "587"
+              assert env["SMTP_TLS"] == "true"
+              assert env["SMTP_SSL"] == "false"
+          '
       - run: docker compose up -d --wait db mailpit
       - run: docker compose run --rm --no-deps backend bash scripts/prestart.sh
       - run: docker compose up -d --wait --no-build backend email-worker

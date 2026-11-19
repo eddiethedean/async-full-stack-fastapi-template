@@ -16,6 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     env:
+      COMPOSE_DISABLE_ENV_FILE: "1"
       BACKEND_IMAGE: asf-backend:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -23,6 +24,10 @@ jobs:
       FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
       FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
+      SMTP_PORT: ${{ vars.SMTP_PORT }}
+      SMTP_TLS: ${{ vars.SMTP_TLS }}
+      SMTP_SSL: ${{ vars.SMTP_SSL }}
+      SMTP_TIMEOUT_SECONDS: ${{ vars.SMTP_TIMEOUT_SECONDS }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       EMAIL_OUTBOX_KEYS: ${{ secrets.EMAIL_OUTBOX_KEYS }}
