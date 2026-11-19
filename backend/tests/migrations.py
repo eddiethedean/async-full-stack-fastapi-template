@@ -7,7 +7,6 @@ from uuid import UUID
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
 from sqlmodel import select
 
 from tests.database import test_database_url
@@ -130,6 +129,8 @@ def verify_populated_upgrade() -> None:
 
 
 def verify_uuid_downgrade() -> None:
+    from sqlalchemy.engine import make_url
+
     database_url = test_database_url()
     integer_revision = "9c0a54914c78"
     uuid_revision = "d98dd8ec85a3"
