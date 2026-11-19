@@ -3,7 +3,7 @@
 import asyncio
 import os
 import subprocess
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine, text
@@ -68,6 +68,8 @@ async def verify_upgraded_application() -> None:
 
 
 def verify_populated_upgrade() -> None:
+    from uuid import uuid4
+
     os.environ.update(
         DATABASE_URL=test_database_url(),
         FASTAPI_ENV="development",
