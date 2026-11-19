@@ -92,8 +92,15 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
 async def test_worker_renews_lease_during_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    polled = asyncio.Event()
     renewed = asyncio.Event()
     finish_delivery = Event()
+
+    def report_progress() -> None:
+        if polled.is_set():
+            renewed.set()
+        else:
+            polled.set()
 
     def smtp(**_data: str) -> None:
         assert finish_delivery.wait(timeout=10)
@@ -105,7 +112,6 @@ async def test_worker_renews_lease_during_delivery(
         assert await renew_email_lease(session, claimed)
         await session.refresh(row)
         assert row.lease_expires_at and row.lease_expires_at > previous_expiry
-        renewed.set()
         return True
 
     monkeypatch.setattr("app.email_worker.send_email", smtp)
@@ -119,9 +125,10 @@ async def test_worker_renews_lease_during_delivery(
             deduplication_key=uuid4().hex,
         )
 
-    delivery = asyncio.create_task(process_next_email())
+    delivery = asyncio.create_task(process_next_email(on_progress=report_progress))
     try:
         await asyncio.wait_for(renewed.wait(), timeout=5)
+        assert polled.is_set() and not delivery.done()
     finally:
         finish_delivery.set()
         assert await delivery

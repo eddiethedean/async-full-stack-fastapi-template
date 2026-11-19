@@ -34,7 +34,7 @@ async def test_cancelled_request_returns_database_connection() -> None:
 
     @app.get("/")
     async def hold_connection(
-        session: Annotated[AsyncSession, Depends(track_cleanup)],
+        session: Annotated[AsyncSession, Depends(track_cleanup, scope="function")],
     ) -> None:
         await session.exec(select(literal(1)))
         query_finished.set()

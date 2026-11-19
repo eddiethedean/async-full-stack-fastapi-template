@@ -51,6 +51,12 @@ services:
         condition: service_healthy
         restart: true
     environment: &app-environment
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-2}
+      DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-5}
+      DB_READINESS_TIMEOUT_SECONDS: ${DB_READINESS_TIMEOUT_SECONDS:-1}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
       FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
@@ -77,14 +83,25 @@ services:
       RATE_LIMIT_RECOVERY_SOURCE: ${RATE_LIMIT_RECOVERY_SOURCE:-}
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      test:
+        - CMD
+        - python
+        - -c
+        - |-
+          import os
+          from urllib.request import urlopen
+
+          timeout = float(os.environ["DB_READINESS_TIMEOUT_SECONDS"]) + 1
+          with urlopen("http://localhost:8000/api/v1/utils/readiness/", timeout=timeout):
+              pass
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 5
 
     build: &app-build
       context: .
       dockerfile: backend/Dockerfile
+      target: production
     labels:
       # Enable Traefik for this service
       - traefik.enable=true
@@ -105,6 +122,11 @@ services:
     environment: *app-environment
     command: ["python", "-m", "app.email_worker"]
     stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.email_worker", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   app-db-data:

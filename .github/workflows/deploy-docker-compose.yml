@@ -28,6 +28,12 @@ jobs:
       EMAIL_OUTBOX_KEY_VERSION: ${{ vars.EMAIL_OUTBOX_KEY_VERSION }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE }}
+      DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW }}
+      DB_POOL_TIMEOUT_SECONDS: ${{ vars.DB_POOL_TIMEOUT_SECONDS }}
+      DB_READINESS_TIMEOUT_SECONDS: ${{ vars.DB_READINESS_TIMEOUT_SECONDS }}
+      MAX_REQUEST_BODY_BYTES: ${{ vars.MAX_REQUEST_BODY_BYTES }}
+      WEB_CONCURRENCY: ${{ vars.WEB_CONCURRENCY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
       FORWARDED_ALLOW_IPS: ${{ vars.FORWARDED_ALLOW_IPS }}
       TRAEFIK_INGRESS_SUBNET: ${{ vars.TRAEFIK_INGRESS_SUBNET }}
@@ -46,7 +52,9 @@ jobs:
           persist-credentials: false
       - name: Build
         run: docker compose -f compose.yml -f compose.deploy.yml build
-      - name: Prepare database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
+      - name: Start database
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait db
+      - name: Migrate and initialize database
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps backend bash scripts/prestart.sh
       - name: Start application
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait

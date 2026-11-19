@@ -12,6 +12,7 @@ services:
   backend:
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     build:
+      target: development
       args:
         VITE_API_URL: ""
     environment:
@@ -29,6 +30,8 @@ services:
       SMTP_PASSWORD: ""
 
   email-worker:
+    build:
+      target: development
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite

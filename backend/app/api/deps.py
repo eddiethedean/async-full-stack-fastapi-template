@@ -27,7 +27,10 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_db)]
+SessionDep = Annotated[
+    AsyncSession,
+    Depends(get_db, scope="function", max_concurrency=settings.DB_POOL_SIZE),
+]
 TokenDep = Annotated[str | None, Depends(reusable_oauth2)]
 BrowserCookieDep = Annotated[str | None, Depends(browser_session_cookie)]
 

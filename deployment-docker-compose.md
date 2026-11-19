@@ -147,3 +147,14 @@ starting the API and worker. Add `EMAIL_OUTBOX_KEYS` to deployment secrets and
 `EMAIL_OUTBOX_KEY_VERSION` to deployment variables when configuring SMTP. Both
 services read the same settings. See [account email delivery](./deployment.md#account-email-delivery)
 for key setup, rotation, and retry behavior.
+
+The base Compose stack builds the unprivileged production image. The development
+override selects the development image so local test and code tools are
+available. The Compose deployment workflow starts PostgreSQL, runs its
+migration step, then waits for the API and worker health checks.
+
+Set `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`,
+`DB_READINESS_TIMEOUT_SECONDS`, `MAX_REQUEST_BODY_BYTES`, or `WEB_CONCURRENCY`
+in the deployment environment or as repository variables for the deployment
+workflow. The Compose probe allows the full API readiness timeout plus one
+second for the HTTP request.

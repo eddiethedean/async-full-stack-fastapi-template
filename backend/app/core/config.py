@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         # Use top level .env file (one level above ./backend/)
         env_file="../.env",
         env_ignore_empty=True,
+        hide_input_in_errors=True,
         extra="ignore",
     )
     API_V1_STR: str = "/api/v1"
@@ -65,6 +66,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
     DATABASE_URL: PostgresDsn
+    DB_POOL_SIZE: int = Field(default=5, ge=1, le=100)
+    DB_MAX_OVERFLOW: int = Field(default=2, ge=0, le=100)
+    DB_POOL_TIMEOUT_SECONDS: float = Field(default=5, gt=0, le=60)
+    DB_READINESS_TIMEOUT_SECONDS: float = Field(default=1, gt=0, le=10)
+    MAX_REQUEST_BODY_BYTES: int = Field(default=262_144, ge=1024)
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
