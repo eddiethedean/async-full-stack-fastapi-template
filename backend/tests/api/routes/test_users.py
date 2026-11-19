@@ -9,7 +9,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
+from app.core.db import create_session
 from app.core.security import verify_password
+from app.core.sessions import advance_auth_version, lock_user
 from app.models import User, UserCreate
 from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -251,6 +253,43 @@ async def test_update_user_me(client: AsyncClient, db: AsyncSession) -> None:
     assert (
         await client.get(f"{settings.API_V1_STR}/users/me", headers=headers)
     ).status_code == 401
+
+
+async def test_profile_update_rechecks_credentials_after_lock(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    email = random_email()
+    password = random_lower_string()
+    user = await crud.create_user(
+        session=db, user_create=UserCreate(email=email, password=password)
+    )
+    headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
+
+    async def rotate_credentials_before_profile_lock(
+        profile_session: AsyncSession, user_id: uuid.UUID
+    ) -> User | None:
+        async with create_session() as change_session:
+            changing_user = await lock_user(change_session, user_id)
+            assert changing_user is not None
+            await advance_auth_version(change_session, changing_user)
+            await change_session.commit()
+        return await lock_user(profile_session, user_id)
+
+    with patch(
+        "app.crud.lock_user", side_effect=rotate_credentials_before_profile_lock
+    ):
+        response = await client.patch(
+            f"{settings.API_V1_STR}/users/me",
+            headers=headers,
+            json={"email": random_email()},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    await db.refresh(user)
+    assert user.email == email
 
 
 async def test_update_password_me(client: AsyncClient, db: AsyncSession) -> None:
@@ -623,12 +662,22 @@ async def test_pending_invitation_activates_only_on_acceptance(
     user = response.json()
     assert user["invitation_pending"] and not user["is_active"]
 
+    user_url = f"{settings.API_V1_STR}/users/{user['id']}"
+    for changes in (
+        {"is_active": True},
+        {"email": random_email()},
+        {"password": random_lower_string()},
+    ):
+        response = await client.patch(
+            user_url, headers=superuser_token_headers, json=changes
+        )
+        assert response.status_code == 409
+
     response = await client.patch(
-        f"{settings.API_V1_STR}/users/{user['id']}",
-        headers=superuser_token_headers,
-        json={"is_active": True},
+        user_url, headers=superuser_token_headers, json={"full_name": "Invited User"}
     )
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["full_name"] == "Invited User"
 
     job = (
         await db.exec(select(EmailOutbox).where(EmailOutbox.recipient == email))

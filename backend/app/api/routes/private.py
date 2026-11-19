@@ -14,6 +14,11 @@ from app.models import (
 router = APIRouter(tags=["private"], prefix="/private")
 
 
+@router.get("/test-mode")
+def test_mode() -> dict[str, bool]:
+    return {"test_mode": True}
+
+
 class PrivateUserCreate(BaseModel):
     email: str
     password: str

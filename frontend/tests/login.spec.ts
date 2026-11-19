@@ -90,9 +90,14 @@ test("Successful log out", async ({ page }) => {
     page.getByText("Welcome back, nice to see you again!"),
   ).toBeVisible()
 
+  const canClearCookie = await page.evaluate(() => Boolean(navigator.locks))
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out" }).click()
   await page.waitForURL("/login")
+  const cookies = await page.context().cookies()
+  expect(cookies.some((cookie) => cookie.name.endsWith("asf_session"))).toBe(
+    !canClearCookie,
+  )
 })
 
 test("Logged-out user cannot access protected routes", async ({ page }) => {
@@ -128,70 +133,94 @@ test("Clearing the session cookie returns the browser to login", async ({
   await expect(page).toHaveURL("/login")
 })
 
-test("A late response from the previous account cannot sign out the next account", async ({
-  page,
-}) => {
-  const first = randomEmail()
-  const second = randomEmail()
-  const password = randomPassword()
-  const title = randomItemTitle()
-  await createUser({ email: first, password })
-  await createUser({ email: second, password })
+for (const switchInAnotherTab of [false, true]) {
+  const location = switchInAnotherTab ? "in another tab" : "in the same tab"
+  test(`A late response preserves the next sign-in ${location}`, async ({
+    page,
+    context,
+  }) => {
+    const first = randomEmail()
+    const second = randomEmail()
+    const password = randomPassword()
+    const title = randomItemTitle()
+    await createUser({ email: first, password })
+    await createUser({ email: second, password })
 
-  await page.goto("/login")
-  await fillForm(page, first, password)
-  await page.getByRole("button", { name: "Log In" }).click()
-  await page.getByRole("link", { name: "Items" }).click()
-  await page.getByRole("button", { name: "Add Item" }).click()
-  await page.getByLabel("Title").fill(title)
-  await page.getByRole("button", { name: "Save" }).click()
-  await expect(page.getByText(title)).toBeVisible()
-
-  await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "User Settings" }).click()
-
-  let releaseResponse = () => {}
-  const responseGate = new Promise<void>((resolve) => {
-    releaseResponse = resolve
-  })
-  await page.route("**/api/v1/users/me", async (route) => {
-    if (route.request().method() !== "PATCH") return route.fallback()
-    await responseGate
-    await route.fulfill({
-      status: 401,
-      json: { detail: "Could not validate credentials" },
-    })
-  })
-
-  try {
-    await page.getByRole("button", { name: "Edit", exact: true }).click()
-    await page.getByLabel("Full name").fill("Changed")
-    const pendingRequest = page.waitForRequest(
-      (request) =>
-        request.method() === "PATCH" && request.url().endsWith("/users/me"),
-    )
-    await page.getByRole("button", { name: "Save" }).click()
-    await pendingRequest
-
-    await page.getByTestId("user-menu").click()
-    await page.getByRole("menuitem", { name: "Log out" }).press("Enter")
-    await expect(page).toHaveURL("/login")
-    await fillForm(page, second, password)
+    if (switchInAnotherTab) {
+      await page.addInitScript(() => {
+        // Hold back the storage notification so the first tab still has the old session.
+        window.addEventListener("storage", (event) => {
+          if (event.key === "asf-session-change")
+            event.stopImmediatePropagation()
+        })
+      })
+    }
+    await page.goto("/login")
+    await fillForm(page, first, password)
     await page.getByRole("button", { name: "Log In" }).click()
     await page.getByRole("link", { name: "Items" }).click()
+    await page.getByRole("button", { name: "Add Item" }).click()
+    await page.getByLabel("Title").fill(title)
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText(title)).toBeVisible()
 
-    const response = page.waitForResponse(
-      (result) =>
-        result.request().method() === "PATCH" &&
-        result.url().endsWith("/users/me"),
-    )
-    releaseResponse()
-    await response
+    await page.getByTestId("user-menu").click()
+    await page.getByRole("menuitem", { name: "User Settings" }).click()
 
-    await expect(page.getByTestId("user-menu")).toContainText(second)
-    await expect(page.getByText(title)).toHaveCount(0)
-    await expect(page).toHaveURL((url) => url.pathname === "/items")
-  } finally {
-    releaseResponse()
-  }
-})
+    let releaseResponse = () => {}
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    await page.route("**/api/v1/users/me", async (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback()
+      await responseGate
+      await route.fulfill({
+        status: 401,
+        json: { detail: "Could not validate credentials" },
+      })
+    })
+
+    try {
+      await page.getByRole("button", { name: "Edit", exact: true }).click()
+      await page.getByLabel("Full name").fill("Changed")
+      const pendingRequest = page.waitForRequest(
+        (request) =>
+          request.method() === "PATCH" && request.url().endsWith("/users/me"),
+      )
+      await page.getByRole("button", { name: "Save" }).click()
+      await pendingRequest
+
+      const signInPage = switchInAnotherTab ? await context.newPage() : page
+      if (switchInAnotherTab) {
+        await signInPage.goto("/")
+      } else {
+        await signInPage.getByRole("link", { name: "Dashboard" }).click()
+      }
+      await expect(signInPage.getByTestId("user-menu")).toContainText(first)
+      await signInPage.getByTestId("user-menu").click()
+      await signInPage.getByRole("menuitem", { name: "Log out" }).click()
+      await expect(signInPage).toHaveURL("/login")
+      await fillForm(signInPage, second, password)
+      await signInPage.getByRole("button", { name: "Log In" }).click()
+      await expect(signInPage.getByTestId("user-menu")).toContainText(second)
+
+      const response = page.waitForResponse(
+        (result) =>
+          result.request().method() === "PATCH" &&
+          result.url().endsWith("/users/me"),
+      )
+      releaseResponse()
+      const denied = await response
+      expect(denied.status()).toBe(401)
+      await denied.finished()
+
+      await expect(page.getByTestId("user-menu")).toContainText(second)
+      await page.getByRole("link", { name: "Items" }).click()
+      await expect(page.getByText("You don't have any items yet")).toBeVisible()
+      await expect(page.getByText(title)).toHaveCount(0)
+      await expect(page).toHaveURL((url) => url.pathname === "/items")
+    } finally {
+      releaseResponse()
+    }
+  })
+}

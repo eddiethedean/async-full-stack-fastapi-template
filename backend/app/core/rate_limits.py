@@ -5,7 +5,6 @@ from ipaddress import IPv6Address, ip_address
 from math import ceil
 from typing import Literal
 
-from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException, Request
 from opentelemetry.metrics import get_meter
 from sqlalchemy import tuple_
@@ -16,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.core.db import create_session
+from app.core.security import normalize_account_email
 
 AuthAction = Literal["login", "signup", "recovery"]
 logger = logging.getLogger(__name__)
@@ -41,14 +41,6 @@ def rate_limit_hash(kind: str, value: str) -> str:
         f"rate-limit/v1/{kind}\x00{value}".encode(),
         "sha256",
     ).hex()
-
-
-def normalize_rate_identity(email: str) -> str:
-    trimmed = email.strip()
-    try:
-        return validate_email(trimmed, check_deliverability=False).normalized
-    except EmailNotValidError:
-        return trimmed
 
 
 def client_address(request: Request) -> str:
@@ -116,9 +108,11 @@ async def check_rate_limits(
         expires_at = window + timedelta(seconds=seconds)
         exceeded = False
         for kind, value, limit in (
-            ("account", normalize_rate_identity(email), limit_account),
             ("source", source, limit_source),
+            ("account", email, limit_account),
         ):
+            if kind == "account":
+                value = normalize_account_email(value)
             stmt = insert(RateLimitBucket).values(
                 action=action,
                 kind=kind,
@@ -132,7 +126,9 @@ async def check_rate_limits(
                 set_={"count": func.least(col(RateLimitBucket.count) + 1, limit + 1)},
             ).returning(col(RateLimitBucket.count))
             count = (await session.exec(upsert)).scalar_one()
-            exceeded |= count > limit
+            if count > limit:
+                exceeded = True
+                break
         await purge_rate_limit_buckets(session, batch_size=20)
     return max(1, ceil((expires_at - now).total_seconds())) if exceeded else None
 

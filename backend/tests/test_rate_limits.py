@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.requests import Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -16,6 +17,8 @@ from app.core.rate_limits import (
     client_address,
     purge_rate_limit_buckets,
 )
+from app.crud import create_user
+from app.models import UserCreate
 
 pytestmark = pytest.mark.anyio
 
@@ -36,6 +39,7 @@ async def test_source_limit_is_separate_from_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "RATE_LIMIT_RECOVERY_SOURCE", 1)
+    monkeypatch.setattr(settings, "RATE_LIMIT_RECOVERY_ACCOUNT", 1)
     source = uuid4().hex
     assert (
         await check_rate_limits("recovery", email="a@example.com", source=source)
@@ -114,16 +118,27 @@ async def test_client_address_ignores_headers_from_untrusted_peers() -> None:
     assert seen == ["203.0.113.8", "192.0.2.10"]
 
 
+@pytest.mark.parametrize("known_account", [False, True])
 async def test_cookie_and_bearer_login_share_the_account_limit(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    known_account: bool,
 ) -> None:
     monkeypatch.setattr(settings, "RATE_LIMIT_LOGIN_ACCOUNT", 1)
-    email = f"{uuid4().hex}@example.com"
+    local_part = uuid4().hex
+    email = f"{local_part}@example.com"
     credentials = {"username": email, "password": "test-only-password"}
+    if known_account:
+        await create_user(
+            session=db,
+            user_create=UserCreate(email=email, password=credentials["password"]),
+        )
     response = await client.post(
-        f"{settings.API_V1_STR}/login/access-token", data=credentials
+        f"{settings.API_V1_STR}/login/access-token",
+        data={**credentials, "username": f"{local_part}@EXAMPLE.COM"},
     )
-    assert response.status_code == 400
+    assert response.status_code == (200 if known_account else 400)
     response = await client.post(
         f"{settings.API_V1_STR}/auth/session",
         json=credentials,
