@@ -10,7 +10,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core import security
-from app.core.browser_auth import COOKIE_NAME, SAFE_METHODS, check_csrf
+from app.core.browser_auth import COOKIE_NAME, SAFE_METHODS, SESSION_HEADER, check_csrf
 from app.core.config import settings
 from app.core.db import create_session
 from app.core.sessions import token_digest
@@ -88,6 +88,12 @@ async def find_browser_session(
     return (await session.exec(statement)).one_or_none()
 
 
+def check_browser_session_binding(request: Request, auth_session: AuthSession) -> None:
+    expected = request.headers.get(SESSION_HEADER)
+    if expected is not None and expected != str(auth_session.id):
+        raise get_credentials_error()
+
+
 @dataclass
 class AuthenticatedSession:
     session: AuthSession
@@ -103,8 +109,6 @@ async def get_browser_session(
     if auth_session is None:
         raise get_credentials_error()
     user = await get_session_user(session, auth_session)
-    if request.method not in SAFE_METHODS:
-        check_csrf(request, auth_session)
     return AuthenticatedSession(auth_session, user)
 
 
@@ -121,7 +125,11 @@ async def get_authenticated_session(
             raise get_credentials_error()
         auth_session, user = await get_bearer_session(session, token)
         return AuthenticatedSession(auth_session, user)
-    return await get_browser_session(session, cookie, request)
+    browser = await get_browser_session(session, cookie, request)
+    check_browser_session_binding(request, browser.session)
+    if request.method not in SAFE_METHODS:
+        check_csrf(request, browser.session)
+    return browser
 
 
 AuthDep = Annotated[AuthenticatedSession, Depends(get_authenticated_session)]

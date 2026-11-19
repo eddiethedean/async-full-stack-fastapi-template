@@ -1,11 +1,15 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.pagination import PaginationParams
+from app.api.routes.items import read_items
 from app.core.config import settings
+from app.core.db import create_session
 from app.crud import create_user
 from app.models import Item, UserCreate
 from tests.utils.item import create_random_item
@@ -155,6 +159,39 @@ async def test_item_pages_have_stable_order_and_filtered_total(
         results.append([row["id"] for row in result["data"]])
 
     assert results == [[str(item_id) for item_id in ids], [str(legacy_item.id)], []]
+
+
+async def test_item_page_and_total_share_a_snapshot(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await create_random_user(db)
+    first = Item(title="First item", owner_id=user.id)
+    second = Item(title="Second item", owner_id=user.id)
+    db.add_all([first, second])
+    await db.commit()
+
+    execute = db.exec
+    deleted = False
+
+    async def delete_after_first_query(statement: Any) -> Any:
+        nonlocal deleted
+        result = await execute(statement)
+        if not deleted:
+            async with create_session() as writer:
+                item = await writer.get(Item, second.id)
+                assert item is not None
+                await writer.delete(item)
+                await writer.commit()
+            deleted = True
+        return result
+
+    monkeypatch.setattr(db, "exec", delete_after_first_query)
+
+    page = await read_items(db, user, PaginationParams(skip=1, limit=1))
+
+    assert deleted
+    assert page.count == 2
+    assert len(page.data) == 1
 
 
 async def test_update_item(

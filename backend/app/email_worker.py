@@ -3,6 +3,7 @@ import asyncio
 import logging
 import signal
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from smtplib import SMTPRecipientsRefused, SMTPResponseException
@@ -14,12 +15,14 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
 from app.core.db import create_session, engine
 from app.email_outbox import (
+    LEASE_DURATION,
     ClaimedEmail,
     active_key,
     claim_email,
     complete_email,
     get_cipher,
     queue_stats,
+    renew_email_lease,
 )
 from app.utils import (
     generate_invitation_email,
@@ -29,6 +32,7 @@ from app.utils import (
 )
 
 logger = logging.getLogger(__name__)
+LEASE_RENEW_INTERVAL = LEASE_DURATION.total_seconds() / 4
 HEARTBEAT = Path("/tmp/asf-email-worker-heartbeat")
 HEARTBEAT_MAX_AGE_SECONDS = 150
 
@@ -40,6 +44,13 @@ def healthy() -> bool:
         return time.time() - HEARTBEAT.stat().st_mtime < HEARTBEAT_MAX_AGE_SECONDS
     except FileNotFoundError:
         return False
+
+
+def record_heartbeat() -> None:
+    try:
+        HEARTBEAT.touch()
+    except OSError:
+        logger.warning("email_outbox heartbeat_unavailable")
 
 
 def deliver_email(claimed: ClaimedEmail) -> None:
@@ -66,9 +77,46 @@ def deliver_email(claimed: ClaimedEmail) -> None:
     )
 
 
-async def process_next_email() -> bool:
+async def keep_email_lease(
+    claimed: ClaimedEmail,
+    finished: asyncio.Event,
+    on_progress: Callable[[], None] | None,
+) -> None:
+    while not finished.is_set():
+        try:
+            await asyncio.wait_for(finished.wait(), timeout=LEASE_RENEW_INTERVAL)
+            return
+        except TimeoutError:
+            pass
+        try:
+            async with create_session() as session, session.begin():
+                renewed = await renew_email_lease(session, claimed)
+        except SQLAlchemyError:
+            logger.warning("email_outbox id=%s lease_renewal_unavailable", claimed.id)
+            continue
+        if not renewed:
+            return
+        if on_progress is not None:
+            on_progress()
+
+
+async def deliver_with_lease(
+    claimed: ClaimedEmail, on_progress: Callable[[], None] | None
+) -> None:
+    finished = asyncio.Event()
+    renewal = asyncio.create_task(keep_email_lease(claimed, finished, on_progress))
+    try:
+        await run_in_threadpool(deliver_email, claimed)
+    finally:
+        finished.set()
+        await renewal
+
+
+async def process_next_email(*, on_progress: Callable[[], None] | None = None) -> bool:
     async with create_session() as session, session.begin():
         claimed = await claim_email(session)
+    if on_progress is not None:
+        on_progress()
     if claimed is None:
         return False
 
@@ -78,7 +126,7 @@ async def process_next_email() -> bool:
         if datetime.now(UTC) >= claimed.expires_at:
             error = "expired"
         else:
-            await run_in_threadpool(deliver_email, claimed)
+            await deliver_with_lease(claimed, on_progress)
     except SMTPRecipientsRefused as exc:
         error = "smtp_recipient"
         retryable = any(400 <= code < 500 for code, _ in exc.recipients.values())
@@ -123,8 +171,7 @@ async def worker() -> None:
         get_cipher(active_key())
         while not stop.is_set():
             try:
-                had_work = await process_next_email()
-                HEARTBEAT.touch()
+                had_work = await process_next_email(on_progress=record_heartbeat)
                 if loop.time() >= next_report:
                     async with create_session() as session:
                         depth, oldest = await queue_stats(session)

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlmodel import Field, SQLModel
@@ -9,11 +10,13 @@ from app.api.deps import (
     BrowserAuthDep,
     BrowserCookieDep,
     SessionDep,
+    check_browser_session_binding,
     find_browser_session,
     get_credentials_error,
     get_session_user,
 )
 from app.core.browser_auth import (
+    SESSION_HEADER,
     check_csrf,
     check_origin,
     clear_session_cookie,
@@ -39,6 +42,7 @@ class BrowserLogin(SQLModel):
 
 
 class BrowserSession(SQLModel):
+    session_id: UUID
     user: UserPublic
     expires_at: datetime
     csrf_token: str
@@ -46,6 +50,7 @@ class BrowserSession(SQLModel):
 
 def _session_info(auth_session: AuthSession, user: User) -> BrowserSession:
     return BrowserSession(
+        session_id=auth_session.id,
         user=UserPublic.model_validate(user),
         expires_at=auth_session.expires_at,
         csrf_token=csrf_token(auth_session),
@@ -111,14 +116,16 @@ async def delete_browser_session(
     cookie: BrowserCookieDep,
     request: Request,
     response: Response,
+    clear_cookie: bool = True,
 ) -> None:
-    """Revoke the active browser session and clear its cookie."""
+    """Revoke the active browser session and optionally clear its cookie."""
     check_origin(request)
     if "authorization" in request.headers:
         raise get_credentials_error()
 
     auth_session = await find_browser_session(session, cookie)
     if auth_session is not None:
+        check_browser_session_binding(request, auth_session)
         try:
             await get_session_user(session, auth_session)
         except HTTPException as error:
@@ -130,7 +137,11 @@ async def delete_browser_session(
             await session.commit()
 
     response.headers["Cache-Control"] = "no-store"
-    clear_session_cookie(response)
+    # The frontend's lock cannot coordinate cookie changes across different origins.
+    if clear_cookie and (
+        SESSION_HEADER not in request.headers or len(settings.auth_origins) == 1
+    ):
+        clear_session_cookie(response)
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)

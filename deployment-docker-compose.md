@@ -60,6 +60,15 @@ The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to t
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
+The deployment puts Traefik and the API on a dedicated ingress network. Uvicorn
+trusts the Traefik peer on that network when resolving the client address for
+[authentication rate limits](./deployment.md#authentication-rate-limits).
+Set the `RATE_LIMIT_*` variables in your deployment environment to override
+the thresholds. If the ingress subnet overlaps another network on the host,
+set `TRAEFIK_INGRESS_SUBNET` and an unused `TRAEFIK_INGRESS_IP` within it.
+Set `FORWARDED_ALLOW_IPS` only when you need to customize the trusted proxy
+addresses. Include the Traefik ingress address when Traefik serves the API.
+
 ## Deploy with GitHub Actions
 
 Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
@@ -81,6 +90,9 @@ To enable emails, add these optional repository variables:
 * `EMAILS_FROM_EMAIL`
 
 To enable Sentry, add the optional `SENTRY_DSN` repository variable.
+
+The workflow also accepts the optional rate-limit and ingress variables
+described above as repository variables.
 
 Add these repository secrets:
 
@@ -138,7 +150,11 @@ for key setup, rotation, and retry behavior.
 
 The base Compose stack builds the unprivileged production image. The development
 override selects the development image so local test and code tools are
-available. Configure `FORWARDED_ALLOW_IPS` with the specific trusted Traefik
-addresses or dedicated ingress subnet so that the shared limiter sees the
-resolved client address. The Compose deployment workflow starts PostgreSQL,
-runs its migration step, then waits for the API and worker health checks.
+available. The Compose deployment workflow starts PostgreSQL, runs its
+migration step, then waits for the API and worker health checks.
+
+Set `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`,
+`DB_READINESS_TIMEOUT_SECONDS`, `MAX_REQUEST_BODY_BYTES`, or `WEB_CONCURRENCY`
+in the deployment environment or as repository variables for the deployment
+workflow. The Compose probe allows the full API readiness timeout plus one
+second for the HTTP request.

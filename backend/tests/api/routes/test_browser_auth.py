@@ -4,7 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.browser_auth import COOKIE_NAME, CSRF_HEADER
+from app.core.browser_auth import COOKIE_NAME, CSRF_HEADER, SESSION_HEADER
 from app.core.config import settings
 from app.crud import create_user
 from app.main import app
@@ -98,6 +98,46 @@ async def test_browser_writes_require_origin_and_session_csrf(
     )
     assert updated.status_code == 200
     assert updated.json()["full_name"] == "Changed"
+
+
+async def test_browser_reads_require_a_matching_session_when_bound(
+    browser: AsyncClient, login_body: dict[str, str]
+) -> None:
+    first = await browser.post(session_url, json=login_body, headers=trusted_origin)
+    second = await browser.post(session_url, json=login_body, headers=trusted_origin)
+    current = {SESSION_HEADER: second.json()["session_id"]}
+    previous = {SESSION_HEADER: first.json()["session_id"]}
+
+    assert (await browser.get(profile_url, headers=current)).status_code == 200
+    assert (await browser.get(profile_url, headers=previous)).status_code == 401
+    restored = await browser.get(session_url, headers=previous)
+    assert restored.json()["session_id"] == current[SESSION_HEADER]
+
+
+@pytest.mark.parametrize("clear_cookie", [False, True])
+async def test_browser_logout_can_revoke_without_expiring_the_cookie(
+    browser: AsyncClient,
+    login_body: dict[str, str],
+    clear_cookie: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if clear_cookie:
+        monkeypatch.setattr(
+            settings, "AUTH_TRUSTED_ORIGINS", ["https://another-frontend.example"]
+        )
+    login = await browser.post(session_url, json=login_body, headers=trusted_origin)
+    headers = {
+        **trusted_origin,
+        CSRF_HEADER: login.json()["csrf_token"],
+        SESSION_HEADER: login.json()["session_id"],
+    }
+    response = await browser.delete(
+        session_url, params={"clear_cookie": clear_cookie}, headers=headers
+    )
+
+    assert response.status_code == 204
+    assert "set-cookie" not in response.headers
+    assert (await browser.get(session_url)).status_code == 401
 
 
 async def test_bearer_precedence_and_logout_all(

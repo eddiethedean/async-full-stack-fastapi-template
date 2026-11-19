@@ -13,6 +13,9 @@ services:
     build:
       target: development
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
+    build:
+      args:
+        VITE_API_URL: ""
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
       FASTAPI_ENV: development

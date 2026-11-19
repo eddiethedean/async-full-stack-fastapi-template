@@ -55,8 +55,8 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-2}
       DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-5}
       DB_READINESS_TIMEOUT_SECONDS: ${DB_READINESS_TIMEOUT_SECONDS:-1}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
-      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
       FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
@@ -73,15 +73,29 @@ services:
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
       SENTRY_DSN: ${SENTRY_DSN:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-}
+      RATE_LIMIT_LOGIN_ACCOUNT: ${RATE_LIMIT_LOGIN_ACCOUNT:-}
+      RATE_LIMIT_LOGIN_SOURCE: ${RATE_LIMIT_LOGIN_SOURCE:-}
+      RATE_LIMIT_SIGNUP_ACCOUNT: ${RATE_LIMIT_SIGNUP_ACCOUNT:-}
+      RATE_LIMIT_SIGNUP_SOURCE: ${RATE_LIMIT_SIGNUP_SOURCE:-}
+      RATE_LIMIT_RECOVERY_ACCOUNT: ${RATE_LIMIT_RECOVERY_ACCOUNT:-}
+      RATE_LIMIT_RECOVERY_SOURCE: ${RATE_LIMIT_RECOVERY_SOURCE:-}
 
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "from urllib.request import urlopen; urlopen('http://localhost:8000/api/v1/utils/readiness/', timeout=3).close()"
+        - |-
+          import os
+          from urllib.request import urlopen
+
+          timeout = float(os.environ["DB_READINESS_TIMEOUT_SECONDS"]) + 1
+          with urlopen("http://localhost:8000/api/v1/utils/readiness/", timeout=timeout):
+              pass
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 5
 
     build: &app-build

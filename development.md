@@ -105,19 +105,17 @@ migrations and initializes test data. Direct `pytest` requires the database to
 be migrated first. Use a fresh test database for each run and remove it when
 finished.
 
-For browser tests, select the isolated Compose files and a unique project name:
+For browser tests, run one of these commands from the repository root:
 
 ```bash
-export COMPOSE_PROJECT_NAME=asf-browser-local
-export COMPOSE_FILE=compose.yml:compose.test.yml
-docker compose build
-docker compose run --rm backend bash scripts/prestart.sh
-docker compose run --rm playwright bunx playwright test
-docker compose down --volumes --remove-orphans
+bun run test
+bun run test:ui
 ```
 
-The browser test setup routes require an explicit development test setting and
-are excluded from the public client.
+Both commands start a disposable Compose project and remove its volumes on
+exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
+running tests that require sign-in. Playwright verifies test mode before signing
+in. The browser test setup routes are excluded from the public client.
 
 ## Docker Compose Files and Environment Variables
 
@@ -144,6 +142,8 @@ Do not store deployment secrets in `.env`. Configure them as described in the [F
 ## Authentication
 
 Browsers sign in at `POST /api/v1/auth/session`. The response sets an HttpOnly cookie and supplies a CSRF token for writes. `GET /api/v1/auth/session` restores the session after reload. Send `X-CSRF-Token` and an allowed `Origin` on cookie-authenticated writes, including `DELETE /api/v1/auth/session` and `POST /api/v1/auth/logout-all`. Adjust `BROWSER_SESSION_EXPIRE_MINUTES` to change the browser session lifetime.
+
+The frontend sends the session ID in `X-Browser-Session` on private requests so a tab can detect when the shared cookie has changed. The ID identifies a session and cannot authenticate a request. Tabs coordinate sign-in and sign-out on the same frontend origin with Web Locks. When Web Locks are unavailable or the API trusts multiple frontend origins, sign-out revokes the session and leaves the unusable cookie to expire or be replaced on the next sign-in.
 
 API clients can still use the OAuth2 bearer login. An explicit Authorization header takes precedence on protected API routes that support both mechanisms. An invalid bearer token returns 401 even when the client has a valid browser cookie. The browser session endpoint itself accepts only cookie credentials.
 

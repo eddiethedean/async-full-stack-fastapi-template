@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from anyio import sleep_forever
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -18,6 +18,7 @@ from app.core.db import create_session
 from app.core.maintenance import maintain_database
 from app.email_outbox import EmailOutbox, enqueue_email
 from app.email_worker import healthy, worker
+from app.main import app
 from app.models import AccountActionToken, AuthSession
 from tests.utils.user import create_random_user
 
@@ -74,6 +75,31 @@ async def test_request_logs_include_id_but_exclude_email(
     assert request_id in caplog.text
     assert email not in caplog.text
     assert "password-recovery/{email}" in caplog.text
+
+
+async def test_unhandled_error_has_request_id(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def unexpected_failure() -> None:
+        raise RuntimeError("Synthetic connection failure")
+
+    monkeypatch.setattr(
+        "app.api.routes.utils.engine", SimpleNamespace(connect=unexpected_failure)
+    )
+    origin = settings.auth_origins[0]
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://testserver",
+    ) as client:
+        with caplog.at_level(INFO, logger="uvicorn.error"):
+            response = await client.get(
+                f"{settings.API_V1_STR}/utils/readiness/", headers={"Origin": origin}
+            )
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] in caplog.text
+    assert response.headers["Access-Control-Allow-Origin"] == origin
+    assert "x-request-id" in response.headers["Access-Control-Expose-Headers"].lower()
 
 
 async def test_maintenance_clears_expired_tokens_and_mail_payloads(
@@ -140,7 +166,9 @@ async def test_email_worker_heartbeat_and_shutdown(
     def remember(_sig: int, handler: Callable[[int, object], None]) -> None:
         actions.append(handler)
 
-    async def process() -> bool:
+    async def process(*, on_progress: Callable[[], None]) -> bool:
+        on_progress()
+        assert healthy()
         actions[-1](0, None)
         return False
 
