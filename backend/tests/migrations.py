@@ -3,10 +3,11 @@
 import asyncio
 import os
 import subprocess
+from collections.abc import Callable
 from uuid import UUID
 
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 from sqlmodel import select
 
 from tests.database import test_database_url
@@ -66,6 +67,74 @@ async def verify_upgraded_application() -> None:
             assert job.kind == "password_reset" and job.payload
 
 
+def verify_varchar_preflight(
+    engine: Engine, migrate: Callable[[str, str], None]
+) -> None:
+    initial_revision = "e2412789c190"
+    varchar_revision = "9c0a54914c78"
+    fits = "界" * 255
+    exceeds_limit = "界" * 256
+    insert_user = text(
+        'INSERT INTO "user" (email, hashed_password, full_name, is_active, is_superuser) '
+        "VALUES (:email, 'fixture', :name, true, false) RETURNING id"
+    )
+    full_name = text('SELECT full_name FROM "user" WHERE id = :id')
+
+    migrate("upgrade", initial_revision)
+    with engine.begin() as conn:
+        owner = conn.execute(
+            insert_user, {"email": "boundary@example.com", "name": fits}
+        ).scalar_one()
+        oversized = conn.execute(
+            insert_user, {"email": "oversized@example.com", "name": exceeds_limit}
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO item (title, description, owner_id) VALUES (:name, :name, :owner)"
+            ),
+            {"name": fits, "owner": owner},
+        )
+
+    failed = subprocess.run(
+        ["alembic", "upgrade", varchar_revision],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert f"user.full_name for row ID {oversized} with 256 characters" in failed.stderr
+    assert "Preserve the original data" in failed.stderr
+    assert exceeds_limit not in failed.stderr
+    with engine.begin() as conn:
+        assert (
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == initial_revision
+        )
+        assert conn.execute(full_name, {"id": oversized}).scalar_one() == exceeds_limit
+        conn.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": oversized})
+
+    offline_upgrade = subprocess.run(
+        ["alembic", "upgrade", "--sql", f"{initial_revision}:{varchar_revision}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    with engine.connect() as conn:
+        # The generated script contains its own BEGIN and COMMIT.
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.exec_driver_sql(offline_upgrade, execution_options={"no_parameters": True})
+        assert (
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == varchar_revision
+        )
+        assert conn.execute(full_name, {"id": owner}).scalar_one() == fits
+        assert conn.execute(text("SELECT title, description FROM item")).one() == (
+            fits,
+            fits,
+        )
+    migrate("downgrade", "base")
+
+
 def verify_populated_upgrade() -> None:
     os.environ.update(
         DATABASE_URL=test_database_url(),
@@ -83,6 +152,7 @@ def verify_populated_upgrade() -> None:
 
     engine = create_engine(str(settings.DATABASE_URL))
     try:
+        verify_varchar_preflight(engine, migrate)
         migrate("upgrade", BASELINE_REVISION)
         with engine.begin() as conn:
             conn.execute(
