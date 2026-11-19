@@ -1,5 +1,6 @@
 import hashlib
 from datetime import timedelta
+from email.header import Header
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -165,10 +166,10 @@ async def reset_password(session: SessionDep, body: NewPassword) -> Message:
     dependencies=[Depends(get_current_active_superuser)],
     response_class=HTMLResponse,
 )
-async def recover_password_html_content(email: str, session: SessionDep) -> Any:
-    """
-    HTML Content for Password Recovery
-    """
+async def recover_password_html_content(
+    email: str, session: SessionDep
+) -> HTMLResponse:
+    """Return the preview with an RFC 2047 Subject header for non-ASCII text."""
     user = await crud.get_user_by_email(session=session, email=email)
 
     if not user:
@@ -183,6 +184,7 @@ async def recover_password_html_content(email: str, session: SessionDep) -> Any:
         token="preview-only",
     )
 
-    return HTMLResponse(
-        content=email_data.html_content, headers={"Subject": email_data.subject}
-    )
+    subject = email_data.subject
+    if not subject.isascii():
+        subject = Header(subject, "utf-8", maxlinelen=75).encode(linesep="")
+    return HTMLResponse(content=email_data.html_content, headers={"Subject": subject})
