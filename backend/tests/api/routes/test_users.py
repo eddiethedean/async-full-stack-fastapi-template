@@ -1,21 +1,18 @@
 import asyncio
-import re
 import uuid
-from typing import Any
 from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import event
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
-from app.core.db import create_session, engine
+from app.core.db import create_session
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
-from app.models import Item, User, UserCreate
+from app.models import User, UserCreate
 from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
@@ -541,6 +538,13 @@ async def test_update_user_email_exists(
 
 
 async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
+    import re
+
+    from sqlalchemy import event
+
+    from app.core.db import engine
+    from app.models import Item
+
     username = random_email()
     password = random_lower_string()
     user_in = UserCreate(email=username, password=password)
@@ -561,11 +565,11 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     item_statements: list[str] = []
 
     def capture_item_queries(
-        _conn: Any,
-        _cursor: Any,
+        _conn: object,
+        _cursor: object,
         statement: str,
-        _parameters: Any,
-        _context: Any,
+        _parameters: object,
+        _context: object,
         _executemany: bool,
     ) -> None:
         if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
