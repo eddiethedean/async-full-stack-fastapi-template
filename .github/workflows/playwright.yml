@@ -49,6 +49,7 @@ jobs:
             - .python-version
             - scripts/generate-client.sh
             - .env
+            - .dockerignore
             - compose*.yml
             - .github/workflows/playwright.yml
 

@@ -16,7 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     env:
-      FORWARDED_ALLOW_IPS: ${{ vars.FORWARDED_ALLOW_IPS }}
+      BACKEND_IMAGE: asf-backend:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
@@ -29,17 +29,37 @@ jobs:
       EMAIL_OUTBOX_KEY_VERSION: ${{ vars.EMAIL_OUTBOX_KEY_VERSION }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE }}
+      DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW }}
+      DB_POOL_TIMEOUT_SECONDS: ${{ vars.DB_POOL_TIMEOUT_SECONDS }}
+      DB_READINESS_TIMEOUT_SECONDS: ${{ vars.DB_READINESS_TIMEOUT_SECONDS }}
+      MAX_REQUEST_BODY_BYTES: ${{ vars.MAX_REQUEST_BODY_BYTES }}
+      WEB_CONCURRENCY: ${{ vars.WEB_CONCURRENCY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      FORWARDED_ALLOW_IPS: ${{ vars.FORWARDED_ALLOW_IPS }}
+      TRAEFIK_INGRESS_SUBNET: ${{ vars.TRAEFIK_INGRESS_SUBNET }}
+      TRAEFIK_INGRESS_IP: ${{ vars.TRAEFIK_INGRESS_IP }}
+      RATE_LIMIT_WINDOW_SECONDS: ${{ vars.RATE_LIMIT_WINDOW_SECONDS }}
+      RATE_LIMIT_LOGIN_ACCOUNT: ${{ vars.RATE_LIMIT_LOGIN_ACCOUNT }}
+      RATE_LIMIT_LOGIN_SOURCE: ${{ vars.RATE_LIMIT_LOGIN_SOURCE }}
+      RATE_LIMIT_SIGNUP_ACCOUNT: ${{ vars.RATE_LIMIT_SIGNUP_ACCOUNT }}
+      RATE_LIMIT_SIGNUP_SOURCE: ${{ vars.RATE_LIMIT_SIGNUP_SOURCE }}
+      RATE_LIMIT_RECOVERY_ACCOUNT: ${{ vars.RATE_LIMIT_RECOVERY_ACCOUNT }}
+      RATE_LIMIT_RECOVERY_SOURCE: ${{ vars.RATE_LIMIT_RECOVERY_SOURCE }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build
-        run: docker compose -f compose.yml -f compose.deploy.yml build
+        run: docker compose -f compose.yml -f compose.deploy.yml build backend
+      - name: Scan the deployment image
+        run: bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
+      - name: Pull supporting service images
+        run: docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
       - name: Start database
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait db
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
       - name: Migrate and initialize database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps backend bash scripts/prestart.sh
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
       - name: Start application
-        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait
+        run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never

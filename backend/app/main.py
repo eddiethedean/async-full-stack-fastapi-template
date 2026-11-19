@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 
 from app.api.main import api_router
 from app.core.access_logs import (
@@ -21,6 +22,20 @@ from app.core.maintenance import maintenance_loop
 from app.crud import DuplicateEmailError
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+
+
+class RuntimeFastAPI(FastAPI):
+    def build_middleware_stack(self) -> ASGIApp:
+        # Include responses from Starlette's server error handler.
+        cors = CORSMiddleware(
+            super().build_middleware_stack(),
+            allow_origins=settings.auth_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["Retry-After", "X-Request-ID"],
+        )
+        return RequestLogMiddleware(cors)
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -51,7 +66,7 @@ if settings.SENTRY_DSN and settings.FASTAPI_ENV != "development":
         before_send_transaction=scrub_error_report,
     )
 
-app = FastAPI(
+app = RuntimeFastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
@@ -68,17 +83,6 @@ async def handle_duplicate_email(
         status_code=409, content={"detail": "User with this email already exists"}
     )
 
-
-app.add_middleware(RequestLogMiddleware)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.auth_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Retry-After", "X-Request-ID"],
-)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.frontend("/", directory=FRONTEND_DIR)

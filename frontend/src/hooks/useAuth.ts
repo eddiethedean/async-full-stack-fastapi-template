@@ -11,9 +11,11 @@ import {
   currentUserOptions,
   getSession,
   replaceBrowserSession,
+  resetBrowserSession,
   restoreBrowserSession,
   setSigningOut,
   useSession,
+  withBrowserSessionLock,
 } from "@/lib/auth"
 import { handleError } from "@/utils"
 import useCustomToast from "./useCustomToast"
@@ -44,12 +46,12 @@ const useAuth = () => {
 
   const loginMutation = useMutation({
     mutationFn: (data: BrowserLogin) =>
-      AuthService.createBrowserSession({ body: data }),
-    onSuccess: ({ data }) => {
-      if (generation === getSession().generation) {
-        replaceBrowserSession(data, true)
-        void navigate({ to: "/" })
-      }
+      withBrowserSessionLock(async () => {
+        const response = await AuthService.createBrowserSession({ body: data })
+        replaceBrowserSession(response.data, true)
+      }),
+    onSuccess: () => {
+      void navigate({ to: "/" })
     },
     onError: handleError.bind(showErrorToast),
   })
@@ -59,7 +61,15 @@ const useAuth = () => {
       return
     setSigningOut(true)
     try {
-      await AuthService.deleteBrowserSession()
+      const signedOut = await withBrowserSessionLock(async (canClearCookie) => {
+        if (generation !== getSession().generation) return false
+        await AuthService.deleteBrowserSession({
+          query: { clear_cookie: canClearCookie },
+        })
+        resetBrowserSession(true)
+        return true
+      })
+      if (signedOut) void navigate({ to: "/login", replace: true })
     } catch (error) {
       if (generation === getSession().generation) {
         setSigningOut(false)
@@ -67,11 +77,7 @@ const useAuth = () => {
           handleError.call(showErrorToast, error)
         }
       }
-      return
     }
-    if (generation !== getSession().generation) return
-    replaceBrowserSession(null, true)
-    void navigate({ to: "/login", replace: true })
   }
 
   return {

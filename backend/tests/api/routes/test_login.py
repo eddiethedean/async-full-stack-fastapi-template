@@ -118,18 +118,25 @@ async def test_unusable_access_credentials(
     assert response.headers["www-authenticate"] == "Bearer"
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 async def test_recovery_password(
-    client: AsyncClient, normal_user_token_headers: dict[str, str], db: AsyncSession
+    client: AsyncClient, db: AsyncSession, legacy: bool
 ) -> None:
-    assert normal_user_token_headers
+    email = random_email()
+    await create_user(
+        session=db, user_create=UserCreate(email=email, password=random_lower_string())
+    )
+    local_part, domain = email.rsplit("@", 1)
+    submitted_email = f"{local_part}@{domain.upper()}"
+    path = f"{settings.API_V1_STR}/password-recovery"
     with (
         patch.object(settings, "SMTP_HOST", "smtp.example.com"),
         patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
     ):
-        response = await client.post(
-            f"{settings.API_V1_STR}/password-recovery",
-            json={"email": settings.EMAIL_TEST_USER},
-        )
+        if legacy:
+            response = await client.post(f"{path}/{submitted_email}")
+        else:
+            response = await client.post(path, json={"email": submitted_email})
     assert response.status_code == 200
     assert response.json() == {
         "message": "If that email is registered, we sent a password recovery link"
@@ -137,7 +144,7 @@ async def test_recovery_password(
     job = (
         await db.exec(
             select(EmailOutbox)
-            .where(col(EmailOutbox.recipient) == settings.EMAIL_TEST_USER)
+            .where(col(EmailOutbox.recipient) == email)
             .order_by(col(EmailOutbox.created_at).desc())
         )
     ).first()

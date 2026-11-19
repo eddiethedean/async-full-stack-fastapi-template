@@ -10,9 +10,11 @@ services:
       - "127.0.0.1::5432"
 
   backend:
+    image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     build:
       target: development
-    image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
+      args:
+        VITE_API_URL: ""
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
       FASTAPI_ENV: development

@@ -7,6 +7,7 @@ from app.models import AuthSession
 
 COOKIE_NAME = "__Host-asf_session" if settings.AUTH_COOKIE_SECURE else "asf_session"
 CSRF_HEADER = "X-CSRF-Token"
+SESSION_HEADER = "X-Browser-Session"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 

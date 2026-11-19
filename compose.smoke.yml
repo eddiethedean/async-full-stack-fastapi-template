@@ -1,0 +1,4 @@
+# Add the mail capture service to the production-image smoke test.
+services:
+  mailpit:
+    image: axllent/mailpit

@@ -1,16 +1,20 @@
+import asyncio
 from datetime import timedelta
 from logging import INFO, LogRecord
 from smtplib import SMTPConnectError, SMTPRecipientsRefused
+from threading import Event
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
 from sqlmodel import col, delete, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.access_logs import SensitivePathFilter
 from app.core.db import create_session
 from app.email_outbox import (
+    ClaimedEmail,
     EmailKind,
     EmailOutbox,
     claim_email,
@@ -18,6 +22,7 @@ from app.email_outbox import (
     database_now,
     enqueue_email,
     get_cipher,
+    renew_email_lease,
 )
 from app.email_worker import process_next_email
 
@@ -33,7 +38,7 @@ async def empty_outbox() -> None:
 async def test_rollback_discards_pending_email() -> None:
     key = uuid4().hex
     async with create_session() as session:
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient="outbox@example.com",
@@ -51,7 +56,7 @@ async def test_rollback_discards_pending_email() -> None:
 
 async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="outbox@example.com",
@@ -72,13 +77,65 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
         assert row
         row.lease_expires_at = await database_now(session) - timedelta(seconds=1)
     async with create_session() as session, session.begin():
+        assert not await renew_email_lease(session, first)
+    async with create_session() as session, session.begin():
         second = await claim_email(session)
         assert second and second.id == first.id
         assert second.lease_id != first.lease_id
+        assert not await renew_email_lease(session, first)
         assert not await complete_email(session, first)
         assert await complete_email(session, second)
         row = await session.get(EmailOutbox, first.id)
         assert row and row.delivered_at and row.payload is None
+
+
+async def test_worker_renews_lease_during_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    polled = asyncio.Event()
+    renewed = asyncio.Event()
+    finish_delivery = Event()
+
+    def report_progress() -> None:
+        if polled.is_set():
+            renewed.set()
+        else:
+            polled.set()
+
+    def smtp(**_data: str) -> None:
+        assert finish_delivery.wait(timeout=10)
+
+    async def track_renewal(session: AsyncSession, claimed: ClaimedEmail) -> bool:
+        row = await session.get(EmailOutbox, claimed.id)
+        assert row and row.lease_expires_at
+        previous_expiry = row.lease_expires_at
+        assert await renew_email_lease(session, claimed)
+        await session.refresh(row)
+        assert row.lease_expires_at and row.lease_expires_at > previous_expiry
+        return True
+
+    monkeypatch.setattr("app.email_worker.send_email", smtp)
+    monkeypatch.setattr("app.email_worker.renew_email_lease", track_renewal)
+    monkeypatch.setattr("app.email_worker.LEASE_RENEW_INTERVAL", 0.01)
+    async with create_session() as session, session.begin():
+        await enqueue_email(
+            session,
+            kind="welcome",
+            recipient="slow-delivery@example.com",
+            deduplication_key=uuid4().hex,
+        )
+
+    delivery = asyncio.create_task(process_next_email(on_progress=report_progress))
+    try:
+        await asyncio.wait_for(renewed.wait(), timeout=5)
+        assert polled.is_set() and not delivery.done()
+    finally:
+        finish_delivery.set()
+        assert await delivery
+
+    async with create_session() as session:
+        row = (await session.exec(select(EmailOutbox))).one()
+        assert row.delivered_at and row.lease_id is None
 
 
 async def test_worker_retries_transient_smtp_error(
@@ -95,7 +152,7 @@ async def test_worker_retries_transient_smtp_error(
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     key = uuid4().hex
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="welcome",
             recipient="retry@example.com",
@@ -131,7 +188,7 @@ async def test_worker_renders_credential_before_delivery(
 
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind=kind,
             recipient=email,
@@ -146,7 +203,7 @@ async def test_worker_renders_credential_before_delivery(
 
 async def test_worker_drops_expired_credential() -> None:
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="expired@example.com",
@@ -169,7 +226,7 @@ async def test_worker_marks_permanent_delivery_failure(
 
     monkeypatch.setattr("app.email_worker.send_email", smtp)
     async with create_session() as session, session.begin():
-        enqueue_email(
+        await enqueue_email(
             session,
             kind="invite",
             recipient="unavailable@example.com",

@@ -2,12 +2,12 @@ import base64
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
-from sqlalchemy import CheckConstraint, Index, and_, or_, text
+from sqlalchemy import CheckConstraint, Index, and_, or_, text, update
 from sqlmodel import Field, SQLModel, col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -75,7 +75,7 @@ def get_cipher(key_version: str) -> Fernet:
     raise ValueError("Email outbox key unavailable")
 
 
-def enqueue_email(
+async def enqueue_email(
     session: AsyncSession,
     *,
     kind: EmailKind,
@@ -84,7 +84,7 @@ def enqueue_email(
     token: str | None = None,
     expires_delta: timedelta = timedelta(hours=48),
 ) -> None:
-    now = datetime.now(UTC)
+    now = await database_now(session)
     key_version = active_key() if token is not None else None
     session.add(
         EmailOutbox(
@@ -159,6 +159,21 @@ def clear_payload(row: EmailOutbox) -> None:
     clear_lease(row)
     row.payload = None
     row.key_version = None
+
+
+async def renew_email_lease(session: AsyncSession, claimed: ClaimedEmail) -> bool:
+    now = func.clock_timestamp()
+    result = await session.exec(
+        update(EmailOutbox)
+        .where(
+            col(EmailOutbox.id) == claimed.id,
+            col(EmailOutbox.lease_id) == claimed.lease_id,
+            col(EmailOutbox.lease_expires_at) > now,
+        )
+        .values(lease_expires_at=now + LEASE_DURATION)
+        .returning(col(EmailOutbox.id))
+    )
+    return result.one_or_none() is not None
 
 
 async def complete_email(

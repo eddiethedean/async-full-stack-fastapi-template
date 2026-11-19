@@ -17,25 +17,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      COMPOSE_FILE: compose.yml
+      COMPOSE_FILE: compose.yml:compose.smoke.yml
       COMPOSE_PROJECT_NAME: asf-smoke-${{ github.run_id }}-${{ github.run_attempt }}
       SECRET_KEY: compose-smoke-tests-only-secret-key
       FIRST_SUPERUSER_PASSWORD: compose-smoke-tests-only-password
       POSTGRES_PASSWORD: compose-smoke-tests-only-postgres
-      SMTP_HOST: ""
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+      SMTP_SSL: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      EMAILS_FROM_EMAIL: smoke@example.com
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: docker compose build
-      - run: docker compose run --rm backend bash scripts/prestart.sh
-      - run: docker compose up -d --wait backend
+      - name: Configure the disposable outbox key
+        run: |
+          keys=$(python3 -c 'import base64, json, secrets; print(json.dumps({"v1": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}))')
+          printf '::add-mask::%s\n' "$keys"
+          printf 'EMAIL_OUTBOX_KEYS=%s\n' "$keys" >> "$GITHUB_ENV"
+      - run: docker compose build backend
+      - run: docker compose up -d --wait db mailpit
+      - run: docker compose run --rm --no-deps backend bash scripts/prestart.sh
+      - run: docker compose up -d --wait --no-build backend email-worker
       - name: Verify the production runtime
         run: |
           docker compose exec -T backend python - <<'PY'
           import json
           import os
+          from time import monotonic, sleep
+          from urllib.parse import urlencode
           from urllib.request import Request, urlopen
 
           assert os.getuid() != 0
@@ -50,18 +64,38 @@ jobs:
               with urlopen(navigation, timeout=5) as response:
                   assert response.headers.get_content_type() == "text/html", path
                   assert b'<div id="root">' in response.read(), path
+
+          recipient = os.environ["FIRST_SUPERUSER"]
+          recovery = Request(
+              base + "/api/v1/password-recovery",
+              data=json.dumps({"email": recipient}).encode(),
+              headers={"Content-Type": "application/json"},
+          )
+          with urlopen(recovery, timeout=5) as response:
+              assert response.status == 200
+
+          mailpit = "http://mailpit:8025"
+          query = urlencode({"query": f"to:{recipient}", "limit": 1})
+          deadline = monotonic() + 30
+          while monotonic() < deadline:
+              with urlopen(f"{mailpit}/api/v1/search?{query}", timeout=5) as response:
+                  messages = json.load(response)["messages"]
+              if messages:
+                  message_id = messages[0]["ID"]
+                  with urlopen(f"{mailpit}/view/{message_id}.html", timeout=5) as response:
+                      assert b"/reset-password?token=" in response.read()
+                  break
+              sleep(0.25)
+          else:
+              raise RuntimeError("The production email worker did not deliver the recovery message")
           PY
+          docker compose exec -T email-worker python -c 'import os; assert os.getuid() != 0'
+          docker compose exec -T email-worker python -m app.email_worker --healthcheck
       - name: Scan the built image for fixable high and critical vulnerabilities
         run: |
-          scan_dir=$(mktemp -d)
-          trap 'rm -rf "$scan_dir"' EXIT
           container=$(docker compose ps --quiet backend)
           image=$(docker inspect --format '{{.Image}}' "$container")
-          docker save --output "$scan_dir/backend.tar" "$image"
-          docker run --rm --volume "$scan_dir:/scan:ro" \
-            aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
-            image --input /scan/backend.tar --scanners vuln --severity HIGH,CRITICAL \
-            --ignore-unfixed --exit-code 1
+          bash scripts/scan-production-image.sh "$image"
       - name: Remove smoke test stack
         if: ${{ always() }}
         run: docker compose down --volumes --remove-orphans

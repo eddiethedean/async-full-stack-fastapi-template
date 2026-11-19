@@ -65,26 +65,36 @@ test.describe("Edit user profile", () => {
 test.describe("Edit user email", () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
-  test("Edit user email with a valid email", async ({ page }) => {
+  test("Edit email without changing a long full name", async ({ page }) => {
     const email = randomEmail()
     const password = randomPassword()
     const updatedEmail = randomEmail()
+    const fullName = "Mariana Alexandra de los Santos Castillo"
 
-    await createUser({ email, password })
+    await createUser({ email, password, fullName })
     await logInUser(page, email, password)
     await page.goto("/settings")
     await page.getByRole("tab", { name: "My profile" }).click()
 
     await page.getByRole("button", { name: "Edit" }).click()
+    await expect(page.getByLabel("Full name")).toHaveValue(fullName)
     await page.getByLabel("Email").fill(updatedEmail)
+    const update = page.waitForRequest(
+      (request) =>
+        request.method() === "PATCH" && request.url().endsWith("/users/me"),
+    )
     await page.getByRole("button", { name: "Save" }).click()
 
+    expect((await update).postDataJSON()).toEqual({ email: updatedEmail })
     await expect(page.getByText("User updated successfully")).toBeVisible()
     await expect(page).toHaveURL("/login")
     await logInUser(page, updatedEmail, password)
     await page.goto("/settings")
     await expect(
       page.locator("form").getByText(updatedEmail, { exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.locator("form").getByText(fullName, { exact: true }),
     ).toBeVisible()
   })
 })

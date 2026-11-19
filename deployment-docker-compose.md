@@ -7,7 +7,7 @@ You can deploy the project to your own remote server with Docker Compose. The de
 Follow the [release rehearsal](./deployment.md#release-rehearsal) on a separate
 Compose project and database. Use the production Compose files and an explicit
 staging environment file. After migrating the database, validate backend
-readiness and the email worker before promoting the same image to production.
+readiness and the email worker before promoting the image to production.
 
 * Have a remote server ready and available.
 * Configure DNS records pointing to the server for the application domain and any supporting service subdomains you want to expose, such as `fastapi-project.example.com` and `adminer.fastapi-project.example.com`.
@@ -56,18 +56,38 @@ To use an authenticated email provider, also set `SMTP_PASSWORD`.
 
 ```bash
 cd /root/code/app/
-docker compose -f compose.yml -f compose.deploy.yml build
-docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
-docker compose -f compose.yml -f compose.deploy.yml up -d
+export BACKEND_IMAGE="asf-backend:release-$(date -u +%Y%m%dT%H%M%SZ)"
+docker compose -f compose.yml -f compose.deploy.yml build backend
+bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
+docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
+docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
+docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
+docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
 ```
+
+To promote the rehearsed image, load it onto the production host, set
+`BACKEND_IMAGE` to its loaded tag, and begin with the scan command.
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
+The deployment puts Traefik and the API on a dedicated ingress network. Uvicorn
+trusts the Traefik peer on that network when resolving the client address for
+[authentication rate limits](./deployment.md#authentication-rate-limits).
+Set the `RATE_LIMIT_*` variables in your deployment environment to override
+the thresholds. If the ingress subnet overlaps another network on the host,
+set `TRAEFIK_INGRESS_SUBNET` and an unused `TRAEFIK_INGRESS_IP` within it.
+Set `FORWARDED_ALLOW_IPS` only when you need to customize the trusted proxy
+addresses. Include the Traefik ingress address when Traefik serves the API.
+
 ## Deploy with GitHub Actions
 
 Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
+
+The workflow gives each build a unique image tag and scans the image on the
+deployment host before migrations. The API and worker start from that same
+local image.
 
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 
@@ -86,6 +106,9 @@ To enable emails, add these optional repository variables:
 * `EMAILS_FROM_EMAIL`
 
 To enable Sentry, add the optional `SENTRY_DSN` repository variable.
+
+The workflow also accepts the optional rate-limit and ingress variables
+described above as repository variables.
 
 Add these repository secrets:
 
@@ -143,7 +166,11 @@ for key setup, rotation, and retry behavior.
 
 The base Compose stack builds the unprivileged production image. The development
 override selects the development image so local test and code tools are
-available. Configure `FORWARDED_ALLOW_IPS` with the specific trusted Traefik
-addresses or dedicated ingress subnet so that the shared limiter sees the
-resolved client address. The Compose deployment workflow starts PostgreSQL,
-runs its migration step, then waits for the API and worker health checks.
+available. The Compose deployment workflow starts PostgreSQL, runs its
+migration step, then waits for the API and worker health checks.
+
+Set `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`,
+`DB_READINESS_TIMEOUT_SECONDS`, `MAX_REQUEST_BODY_BYTES`, or `WEB_CONCURRENCY`
+in the deployment environment or as repository variables for the deployment
+workflow. The Compose probe allows the full API readiness timeout plus one
+second for the HTTP request.

@@ -77,10 +77,11 @@ def test_token(current_user: CurrentUser) -> Any:
 async def queue_recovery(email: str, session: SessionDep, request: Request) -> Message:
     await enforce_rate_limit(request, action="recovery", email=email)
     if settings.emails_enabled:
+        account_email = security.normalize_account_email(email)
         user = (
             await session.exec(
                 select(User)
-                .where(col(User.email) == email, col(User.is_active).is_(True))
+                .where(col(User.email) == account_email, col(User.is_active).is_(True))
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -90,7 +91,7 @@ async def queue_recovery(email: str, session: SessionDep, request: Request) -> M
             token = issue_account_action(
                 session, user, purpose="password_reset", expires_delta=expires_delta
             )
-            enqueue_email(
+            await enqueue_email(
                 session,
                 kind="password_reset",
                 recipient=user.email,
