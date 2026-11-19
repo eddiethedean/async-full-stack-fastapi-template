@@ -1,18 +1,21 @@
 import asyncio
+import re
 import uuid
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
-from app.core.db import create_session
+from app.core.db import create_session, engine
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
-from app.models import User, UserCreate
+from app.models import Item, User, UserCreate
 from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
@@ -543,6 +546,8 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     user_in = UserCreate(email=username, password=password)
     user = await crud.create_user(session=db, user_create=user_in)
     user_id = user.id
+    db.add_all(Item(title=f"Item {index}", owner_id=user_id) for index in range(3))
+    await db.commit()
 
     login_data = {
         "username": username,
@@ -553,19 +558,35 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     a_token = tokens["access_token"]
     headers = {"Authorization": f"Bearer {a_token}"}
 
-    r = await client.delete(
-        f"{settings.API_V1_STR}/users/me",
-        headers=headers,
-    )
+    item_statements: list[str] = []
+
+    def capture_item_queries(
+        _conn: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
+            item_statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+    try:
+        r = await client.delete(
+            f"{settings.API_V1_STR}/users/me",
+            headers=headers,
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_item_queries)
     assert r.status_code == 200
     deleted_user = r.json()
     assert deleted_user["message"] == "User deleted successfully"
     result = (await db.exec(select(User).where(User.id == user_id))).first()
     assert result is None
 
-    user_query = select(User).where(User.id == user_id)
-    user_db = (await db.exec(user_query)).first()
-    assert user_db is None
+    assert not item_statements
+    assert not (await db.exec(select(Item).where(Item.owner_id == user_id))).all()
 
 
 async def test_delete_user_me_as_superuser(
