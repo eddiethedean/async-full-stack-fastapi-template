@@ -11,7 +11,7 @@ import {
   queryClient,
   replaceBrowserSession,
   resetBrowserSession,
-  sessionChanges,
+  sessionChangeKey,
   subscribeSession,
 } from "./lib/auth"
 import "./index.css"
@@ -25,10 +25,17 @@ client.setConfig({
 const router = createRouter({ routeTree })
 const authenticatedRequests = new WeakMap<InternalAxiosRequestConfig, number>()
 
+function refreshBrowserSession() {
+  resetBrowserSession()
+  void router.invalidate()
+}
+
 client.instance.interceptors.request.use(
   (config) => {
     const { browser, generation } = getSession()
-    if (browser && !config.headers.has("Authorization")) {
+    if (config.headers.has("Authorization")) return config
+    config.headers.set("X-Browser-Session", browser?.session_id ?? "unrestored")
+    if (browser) {
       authenticatedRequests.set(config, generation)
       if (
         !["GET", "HEAD", "OPTIONS"].includes(
@@ -51,15 +58,15 @@ client.instance.interceptors.response.use(undefined, (error: unknown) => {
     error.config &&
     authenticatedRequests.get(error.config) === getSession().generation
   ) {
-    replaceBrowserSession(null)
-    void router.navigate({ to: "/login", replace: true })
+    refreshBrowserSession()
   }
   return Promise.reject(error)
 })
 
-sessionChanges?.addEventListener("message", () => {
-  resetBrowserSession()
-  void router.invalidate()
+window.addEventListener("storage", (event) => {
+  if (event.storageArea === localStorage && event.key === sessionChangeKey) {
+    refreshBrowserSession()
+  }
 })
 
 let expiryTimer: number | undefined

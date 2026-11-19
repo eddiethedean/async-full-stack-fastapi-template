@@ -13,6 +13,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.database_url import require_test_database
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -110,13 +112,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
-        if self.ENABLE_TEST_ROUTES and (
-            self.FASTAPI_ENV != "development"
-            or not (self.DATABASE_URL.path or "").startswith("/asf_test_")
-        ):
-            raise ValueError(
-                "Test routes require development and an asf_test_ database."
-            )
+        if self.ENABLE_TEST_ROUTES:
+            if self.FASTAPI_ENV != "development":
+                raise ValueError("Test routes require the development environment.")
+            require_test_database(self.DATABASE_URL)
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         for host in self.DATABASE_URL.hosts():
             self._check_default_secret("DATABASE_URL password", host["password"])
