@@ -64,7 +64,9 @@ class User(UserBase, table=True):
     )
     auth_version: int = Field(default=0, sa_column_kwargs={"server_default": text("0")})
     created_at: datetime | None = Field(default_factory=get_datetime_utc)
-    items: list[Item] = Relationship(back_populates="owner", cascade_delete=True)
+    items: list[Item] = Relationship(
+        back_populates="owner", cascade_delete=True, passive_deletes=True
+    )
 
 
 class AuthSession(SQLModel, table=True):

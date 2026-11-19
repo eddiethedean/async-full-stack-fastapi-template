@@ -3,13 +3,15 @@ import asyncio
 import logging
 import signal
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from smtplib import SMTPRecipientsRefused, SMTPResponseException
 
 from cryptography.fernet import InvalidToken
 from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
@@ -22,7 +24,7 @@ from app.email_outbox import (
     claim_email,
     complete_email,
     get_cipher,
-    has_current_email_lease,
+    lock_current_email_lease,
     queue_stats,
     renew_email_lease,
 )
@@ -76,6 +78,7 @@ async def keep_email_lease(
     claimed: ClaimedEmail,
     finished: asyncio.Event,
     on_progress: Callable[[], None] | None,
+    delivery_session: AsyncSession | None,
 ) -> None:
     while not finished.is_set():
         try:
@@ -83,29 +86,52 @@ async def keep_email_lease(
             return
         except TimeoutError:
             pass
-        try:
-            async with create_session() as session, session.begin():
-                renewed = await renew_email_lease(session, claimed)
-        except SQLAlchemyError:
-            logger.warning("email_outbox id=%s lease_renewal_unavailable", claimed.id)
-            continue
+        if delivery_session is not None:
+            renewed = await renew_email_lease(delivery_session, claimed)
+        else:
+            try:
+                async with create_session() as session, session.begin():
+                    renewed = await renew_email_lease(session, claimed)
+            except SQLAlchemyError:
+                logger.warning(
+                    "email_outbox id=%s lease_renewal_unavailable", claimed.id
+                )
+                continue
         if not renewed:
             return
         if on_progress is not None:
             on_progress()
 
 
-async def deliver_with_lease(
-    claimed: ClaimedEmail, on_progress: Callable[[], None] | None
-) -> None:
+@asynccontextmanager
+async def renewing_email_lease(
+    claimed: ClaimedEmail,
+    on_progress: Callable[[], None] | None,
+    delivery_session: AsyncSession | None = None,
+) -> AsyncIterator[None]:
     finished = asyncio.Event()
-    renewal = asyncio.create_task(keep_email_lease(claimed, finished, on_progress))
+    renewal = asyncio.create_task(
+        keep_email_lease(claimed, finished, on_progress, delivery_session)
+    )
     try:
+        yield
+    finally:
+        finished.set()
+        await renewal
+
+
+async def deliver_with_lease(
+    session: AsyncSession,
+    claimed: ClaimedEmail,
+    on_progress: Callable[[], None] | None,
+) -> bool:
+    async with renewing_email_lease(claimed, on_progress):
         email = await run_in_threadpool(render_email, claimed)
-        # Account deletion can revoke the lease between claiming and sending.
-        async with create_session() as session:
-            if not await has_current_email_lease(session, claimed):
-                return
+    # The delete trigger updates this row. Hold its lock until the SMTP
+    # attempt and its recorded outcome are complete.
+    if not await lock_current_email_lease(session, claimed):
+        return False
+    async with renewing_email_lease(claimed, on_progress, session):
         await run_in_threadpool(
             send_email,
             email_to=claimed.recipient,
@@ -113,9 +139,7 @@ async def deliver_with_lease(
             html_content=email.html_content,
             message_id=f"{claimed.id}@email-outbox",
         )
-    finally:
-        finished.set()
-        await renewal
+    return True
 
 
 async def process_next_email(*, on_progress: Callable[[], None] | None = None) -> bool:
@@ -131,26 +155,27 @@ async def process_next_email(*, on_progress: Callable[[], None] | None = None) -
 
     error = None
     retryable = False
-    try:
-        if datetime.now(UTC) >= claimed.expires_at:
-            error = "expired"
-        else:
-            await deliver_with_lease(claimed, on_progress)
-    except SMTPRecipientsRefused as exc:
-        error = "smtp_recipient"
-        retryable = any(400 <= code < 500 for code, _ in exc.recipients.values())
-    except SMTPResponseException as exc:
-        error = "smtp_rejected"
-        retryable = 400 <= exc.smtp_code < 500
-    except OSError:
-        error = "smtp_unavailable"
-        retryable = True
-    except InvalidToken, ValueError:
-        error = "email_payload"
-        retryable = True
-
+    can_complete = True
     async with create_session() as session, session.begin():
-        completed = await complete_email(
+        try:
+            if datetime.now(UTC) >= claimed.expires_at:
+                error = "expired"
+            else:
+                can_complete = await deliver_with_lease(session, claimed, on_progress)
+        except SMTPRecipientsRefused as exc:
+            error = "smtp_recipient"
+            retryable = any(400 <= code < 500 for code, _ in exc.recipients.values())
+        except SMTPResponseException as exc:
+            error = "smtp_rejected"
+            retryable = 400 <= exc.smtp_code < 500
+        except OSError:
+            error = "smtp_unavailable"
+            retryable = True
+        except InvalidToken, ValueError:
+            error = "email_payload"
+            retryable = True
+
+        completed = can_complete and await complete_email(
             session, claimed, error=error, retryable=retryable
         )
     logger.info(

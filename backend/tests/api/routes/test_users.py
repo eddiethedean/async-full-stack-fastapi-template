@@ -1,15 +1,16 @@
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
-from sqlmodel import select
+from sqlmodel import col, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
-from app.core.db import create_session
+from app.core.db import create_session, engine
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
 from app.models import User, UserCreate
@@ -537,12 +538,151 @@ async def test_update_user_email_exists(
     assert r.json()["detail"] == "User with this email already exists"
 
 
+@pytest.fixture
+async def sole_active_superuser(db: AsyncSession) -> AsyncIterator[User]:
+    user = await crud.get_user_by_email(session=db, email=settings.FIRST_SUPERUSER)
+    assert user is not None and user.is_active and user.is_superuser
+    other_ids = (
+        (
+            await db.exec(
+                update(User)
+                .where(
+                    col(User.id) != user.id,
+                    col(User.is_superuser).is_(True),
+                    col(User.is_active).is_(True),
+                )
+                .values(is_superuser=False)
+                .returning(col(User.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await db.commit()
+    try:
+        yield user
+    finally:
+        await db.refresh(user)
+        user.is_superuser = True
+        user.is_active = True
+        if other_ids:
+            await db.exec(
+                update(User)
+                .where(col(User.id).in_(other_ids))
+                .values(is_superuser=True)
+            )
+        await db.commit()
+
+
+@pytest.mark.parametrize("field", ["is_superuser", "is_active"])
+async def test_cannot_remove_last_active_superuser(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    sole_active_superuser: User,
+    field: str,
+) -> None:
+    url = f"{settings.API_V1_STR}/users/{sole_active_superuser.id}"
+    response = await client.patch(
+        url, headers=superuser_token_headers, json={field: False}
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Cannot remove the last active superuser"}
+    listing = await client.get(
+        f"{settings.API_V1_STR}/users/", headers=superuser_token_headers
+    )
+    assert listing.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("isolation_level", "conflict_detail"),
+    [
+        ("READ COMMITTED", "Cannot remove the last active superuser"),
+        ("REPEATABLE READ", "Superuser membership changed. Retry the request."),
+    ],
+)
+async def test_concurrent_superuser_removals_preserve_one_admin(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    sole_active_superuser: User,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    isolation_level: str,
+    conflict_detail: str,
+) -> None:
+    email, password = random_email(), random_lower_string()
+    second = await crud.create_user(
+        session=db,
+        user_create=UserCreate(email=email, password=password, is_superuser=True),
+    )
+    second_headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
+    request_engine = engine.execution_options(isolation_level=isolation_level)
+    both_ready = asyncio.Event()
+    ready_count = 0
+    acquire_lock = crud.lock_active_superuser_removal
+
+    def create_request_session() -> AsyncSession:
+        return AsyncSession(request_engine, expire_on_commit=False)
+
+    async def wait_for_both_requests(session: AsyncSession) -> None:
+        # Both requests must finish reading the target before either can write.
+        nonlocal ready_count
+        ready_count += 1
+        if ready_count == 2:
+            both_ready.set()
+        await asyncio.wait_for(both_ready.wait(), timeout=5)
+        await acquire_lock(session)
+
+    monkeypatch.setattr("app.api.deps.create_session", create_request_session)
+    monkeypatch.setattr(crud, "lock_active_superuser_removal", wait_for_both_requests)
+    try:
+        responses = await asyncio.gather(
+            client.patch(
+                f"{settings.API_V1_STR}/users/{sole_active_superuser.id}",
+                headers=superuser_token_headers,
+                json={"is_superuser": False},
+            ),
+            client.patch(
+                f"{settings.API_V1_STR}/users/{second.id}",
+                headers=second_headers,
+                json={"is_active": False},
+            ),
+        )
+        assert sorted(response.status_code for response in responses) == [200, 409]
+        conflict = next(
+            response for response in responses if response.status_code == 409
+        )
+        assert conflict.json() == {"detail": conflict_detail}
+        active_ids = (
+            await db.exec(
+                select(User.id).where(
+                    col(User.is_active).is_(True), col(User.is_superuser).is_(True)
+                )
+            )
+        ).all()
+        assert len(active_ids) == 1
+    finally:
+        await db.delete(second)
+        await db.commit()
+
+
 async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
+    import re
+
+    from sqlalchemy import event
+
+    from app.core.db import engine
+    from app.models import Item
+
     username = random_email()
     password = random_lower_string()
     user_in = UserCreate(email=username, password=password)
     user = await crud.create_user(session=db, user_create=user_in)
     user_id = user.id
+    db.add_all(Item(title=f"Item {index}", owner_id=user_id) for index in range(3))
+    await db.commit()
 
     login_data = {
         "username": username,
@@ -553,19 +693,35 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     a_token = tokens["access_token"]
     headers = {"Authorization": f"Bearer {a_token}"}
 
-    r = await client.delete(
-        f"{settings.API_V1_STR}/users/me",
-        headers=headers,
-    )
+    item_statements: list[str] = []
+
+    def capture_item_queries(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
+            item_statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+    try:
+        r = await client.delete(
+            f"{settings.API_V1_STR}/users/me",
+            headers=headers,
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_item_queries)
     assert r.status_code == 200
     deleted_user = r.json()
     assert deleted_user["message"] == "User deleted successfully"
     result = (await db.exec(select(User).where(User.id == user_id))).first()
     assert result is None
 
-    user_query = select(User).where(User.id == user_id)
-    user_db = (await db.exec(user_query)).first()
-    assert user_db is None
+    assert not item_statements
+    assert not (await db.exec(select(Item).where(Item.owner_id == user_id))).all()
 
 
 async def test_delete_user_me_as_superuser(

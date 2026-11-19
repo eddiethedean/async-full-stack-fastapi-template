@@ -1,12 +1,14 @@
-"""Check an upgrade from the last release with data in the old schema."""
+"""Check migrations with data in historical schemas."""
 
 import asyncio
 import os
 import subprocess
-from uuid import UUID
+from collections.abc import Callable
+from time import monotonic, sleep
+from uuid import UUID, uuid4
 
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 from sqlmodel import select
 
 from tests.database import test_database_url
@@ -17,6 +19,62 @@ USER_ID = UUID("00000000-0000-4000-8000-000000000001")
 ITEM_ID = UUID("00000000-0000-4000-8000-000000000002")
 EMAIL = "migration@example.com"
 PASSWORD = "migration-test-password"
+
+
+def upgrade_during_legacy_invitation(engine: Engine) -> None:
+    user_id = uuid4()
+    key = f"invite:{user_id}"
+    with engine.connect() as writer, engine.connect() as observer:
+        writer.execute(text("SET LOCAL statement_timeout = '10s'"))
+        writer.execute(
+            text(
+                'INSERT INTO "user" (id, email, hashed_password, is_active, '
+                "is_superuser, invitation_pending) "
+                "VALUES (:id, 'legacy-invite@example.com', 'unused', false, false, true)"
+            ),
+            {"id": user_id},
+        )
+        with subprocess.Popen(["alembic", "upgrade", "head"]) as migration:
+            try:
+                deadline = monotonic() + 10
+                while not observer.scalar(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                        """WHERE relation = '"user"'::regclass """
+                        "AND mode = 'ShareRowExclusiveLock' AND NOT granted)"
+                    )
+                ):
+                    assert migration.poll() is None and monotonic() < deadline
+                    sleep(0.01)
+                writer.execute(
+                    text(
+                        "INSERT INTO email_outbox "
+                        "(id, kind, recipient, deduplication_key, payload, key_version, "
+                        "attempts, created_at, available_at, expires_at) "
+                        "VALUES (:id, 'invite', 'legacy-invite@example.com', :key, "
+                        ":payload, 'development', 0, now(), now(), now() + interval '1 hour')"
+                    ),
+                    {"id": uuid4(), "key": key, "payload": b"legacy"},
+                )
+                writer.commit()
+                assert migration.wait(timeout=10) == 0
+            finally:
+                if migration.poll() is None:
+                    migration.terminate()
+
+    with engine.begin() as conn:
+        job = conn.execute(
+            text(
+                "SELECT user_id, failed_at, payload FROM email_outbox "
+                "WHERE deduplication_key = :key"
+            ),
+            {"key": key},
+        ).one()
+        assert job == (user_id, None, b"legacy")
+        conn.execute(
+            text("DELETE FROM email_outbox WHERE deduplication_key = :key"),
+            {"key": key},
+        )
 
 
 async def verify_upgraded_application() -> None:
@@ -67,9 +125,75 @@ async def verify_upgraded_application() -> None:
             assert job.kind == "password_reset" and job.payload
 
 
-def verify_populated_upgrade() -> None:
-    from uuid import uuid4
+def verify_varchar_preflight(
+    engine: Engine, migrate: Callable[[str, str], None]
+) -> None:
+    initial_revision = "e2412789c190"
+    varchar_revision = "9c0a54914c78"
+    fits = "界" * 255
+    exceeds_limit = "界" * 256
+    insert_user = text(
+        'INSERT INTO "user" (email, hashed_password, full_name, is_active, is_superuser) '
+        "VALUES (:email, 'fixture', :name, true, false) RETURNING id"
+    )
+    full_name = text('SELECT full_name FROM "user" WHERE id = :id')
 
+    migrate("upgrade", initial_revision)
+    with engine.begin() as conn:
+        owner = conn.execute(
+            insert_user, {"email": "boundary@example.com", "name": fits}
+        ).scalar_one()
+        oversized = conn.execute(
+            insert_user, {"email": "oversized@example.com", "name": exceeds_limit}
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO item (title, description, owner_id) VALUES (:name, :name, :owner)"
+            ),
+            {"name": fits, "owner": owner},
+        )
+
+    failed = subprocess.run(
+        ["alembic", "upgrade", varchar_revision],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert f"user.full_name for row ID {oversized} with 256 characters" in failed.stderr
+    assert "Preserve the original data" in failed.stderr
+    assert exceeds_limit not in failed.stderr
+    with engine.begin() as conn:
+        assert (
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == initial_revision
+        )
+        assert conn.execute(full_name, {"id": oversized}).scalar_one() == exceeds_limit
+        conn.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": oversized})
+
+    offline_upgrade = subprocess.run(
+        ["alembic", "upgrade", "--sql", f"{initial_revision}:{varchar_revision}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    with engine.connect() as conn:
+        # The generated script contains its own BEGIN and COMMIT.
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.exec_driver_sql(offline_upgrade, execution_options={"no_parameters": True})
+        assert (
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == varchar_revision
+        )
+        assert conn.execute(full_name, {"id": owner}).scalar_one() == fits
+        assert conn.execute(text("SELECT title, description FROM item")).one() == (
+            fits,
+            fits,
+        )
+    migrate("downgrade", "base")
+
+
+def verify_populated_upgrade() -> None:
     os.environ.update(
         DATABASE_URL=test_database_url(),
         FASTAPI_ENV="development",
@@ -86,6 +210,7 @@ def verify_populated_upgrade() -> None:
 
     engine = create_engine(str(settings.DATABASE_URL))
     try:
+        verify_varchar_preflight(engine, migrate)
         migrate("upgrade", BASELINE_REVISION)
         with engine.begin() as conn:
             conn.execute(
@@ -139,7 +264,7 @@ def verify_populated_upgrade() -> None:
                     for key, kind in legacy_jobs.items()
                 ],
             )
-        migrate("upgrade", "head")
+        upgrade_during_legacy_invitation(engine)
         migrate("check")
         with engine.connect() as conn:
             email, password_hash, auth_version = conn.execute(
@@ -175,5 +300,121 @@ def verify_populated_upgrade() -> None:
     asyncio.run(verify_upgraded_application())
 
 
+def verify_uuid_downgrade() -> None:
+    from sqlalchemy.engine import make_url
+
+    database_url = test_database_url()
+    integer_revision = "9c0a54914c78"
+    uuid_revision = "d98dd8ec85a3"
+    ownerless_item_id = UUID("00000000-0000-4000-8000-000000000003")
+    migration_env = {
+        **os.environ,
+        "DATABASE_URL": database_url,
+        "FASTAPI_ENV": "development",
+    }
+
+    def migrate(direction: str, revision: str) -> None:
+        subprocess.run(
+            ["alembic", direction, revision],
+            env=migration_env,
+            check=True,
+        )
+
+    columns = text(
+        "SELECT table_name, column_name, data_type, column_default, is_nullable "
+        "FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND (table_name, column_name) IN "
+        "(('user', 'id'), ('item', 'id'), ('item', 'owner_id')) "
+        "ORDER BY table_name, column_name"
+    )
+    insert_user = text(
+        'INSERT INTO "user" (email, hashed_password, is_active, is_superuser) '
+        "VALUES (:email, 'fixture', true, false) RETURNING id"
+    )
+    insert_item = text(
+        "INSERT INTO item (title, owner_id) VALUES (:title, :owner) RETURNING id"
+    )
+    email = "before-uuid@example.com"
+    engine = create_engine(make_url(database_url).set(drivername="postgresql+psycopg"))
+    try:
+        migrate("upgrade", integer_revision)
+        with engine.begin() as conn:
+            original_columns = conn.execute(columns).all()
+            assert len(original_columns) == 3
+            owner = conn.execute(insert_user, {"email": email}).scalar_one()
+            conn.execute(insert_item, {"title": "Before UUIDs", "owner": owner})
+
+        migrate("upgrade", uuid_revision)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO item (id, title) VALUES (:id, 'Ownerless UUID item')"
+                ),
+                {"id": ownerless_item_id},
+            )
+
+        failed = subprocess.run(
+            ["alembic", "downgrade", integer_revision],
+            env=migration_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert f"Item {ownerless_item_id} has no owner" in failed.stderr
+        assert "Assign a verified owner before retrying" in failed.stderr
+        with engine.begin() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == uuid_revision
+            )
+            assert (
+                conn.execute(
+                    text("SELECT owner_id FROM item WHERE id = :id"),
+                    {"id": ownerless_item_id},
+                ).scalar_one()
+                is None
+            )
+            conn.execute(
+                text(
+                    'UPDATE item SET owner_id = (SELECT id FROM "user" WHERE email = :email) '
+                    "WHERE id = :id"
+                ),
+                {"email": email, "id": ownerless_item_id},
+            )
+
+        migrate("downgrade", integer_revision)
+        with engine.begin() as conn:
+            assert conn.execute(columns).all() == original_columns
+            original_owner, original_item, item_owner = conn.execute(
+                text(
+                    'SELECT "user".id, item.id, item.owner_id FROM "user", item '
+                    "WHERE email = :email AND title = 'Before UUIDs'"
+                ),
+                {"email": email},
+            ).one()
+            assert original_owner == item_owner
+            repaired_item, repaired_owner = conn.execute(
+                text(
+                    "SELECT id, owner_id FROM item WHERE title = 'Ownerless UUID item'"
+                )
+            ).one()
+            assert repaired_owner == original_owner
+            new_owner = conn.execute(
+                insert_user, {"email": "after-rollback@example.com"}
+            ).scalar_one()
+            new_item = conn.execute(
+                insert_item, {"title": "After rollback", "owner": new_owner}
+            ).scalar_one()
+            assert new_owner > original_owner
+            assert new_item > max(original_item, repaired_item)
+        migrate("downgrade", "base")
+    finally:
+        engine.dispose()
+
+
 if __name__ == "__main__":
+    verify_uuid_downgrade()
     verify_populated_upgrade()

@@ -4,14 +4,17 @@ from datetime import timedelta
 from logging import INFO, LogRecord
 from smtplib import SMTPConnectError, SMTPRecipientsRefused
 from threading import Event
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlmodel import col, delete, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import email_worker
 from app.core.access_logs import SensitivePathFilter
 from app.core.config import settings
 from app.core.db import create_session
@@ -117,10 +120,12 @@ async def test_account_deletion_cancels_queued_email(
         assert deleted.status_code == 200
 
     async def delete_before_send(
-        claimed: ClaimedEmail, on_progress: Callable[[], None] | None
-    ) -> None:
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
         await delete_account()
-        await deliver_with_lease(claimed, on_progress)
+        return await deliver_with_lease(session, claimed, on_progress)
 
     with patch("app.email_worker.send_email") as send:
         if claimed_before_deletion:
@@ -142,6 +147,69 @@ async def test_account_deletion_cancels_queued_email(
             assert job.failed_at and job.last_error == "account_deleted"
             assert job.delivered_at is None and job.user_id is None
             assert job.payload is None and job.key_version is None
+
+
+async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    email = random_email()
+    users_url = f"{settings.API_V1_STR}/users/"
+    created = await client.post(
+        users_url,
+        headers=superuser_token_headers,
+        json={"email": email, "password": random_lower_string()},
+    )
+    assert created.status_code == 200
+    user_id = created.json()["id"]
+    before_smtp = asyncio.Event()
+    start_smtp = asyncio.Event()
+    dispatch = email_worker.run_in_threadpool
+
+    async def pause_before_smtp(
+        function: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        if function is email_worker.send_email:
+            before_smtp.set()
+            await start_smtp.wait()
+        return await dispatch(function, *args, **kwargs)
+
+    monkeypatch.setattr(email_worker, "run_in_threadpool", pause_before_smtp)
+    with patch.object(email_worker, "send_email") as send:
+        delivery = asyncio.create_task(process_next_email())
+        await asyncio.wait_for(before_smtp.wait(), timeout=5)
+        deletion = asyncio.create_task(
+            client.delete(f"{users_url}{user_id}", headers=superuser_token_headers)
+        )
+        try:
+            async with asyncio.timeout(5):
+                while not deletion.done():
+                    async with create_session() as observer:
+                        if await observer.scalar(
+                            text(
+                                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                                "WHERE datname = current_database() "
+                                "AND wait_event_type = 'Lock' "
+                                """AND query LIKE 'DELETE FROM "user" WHERE%')"""
+                            )
+                        ):
+                            break
+                    await asyncio.sleep(0.01)
+                assert not deletion.done(), "deletion committed before SMTP started"
+                send.assert_not_called()
+        finally:
+            start_smtp.set()
+            assert await delivery
+            assert (await deletion).status_code == 200
+        send.assert_called_once()
+
+    async with create_session() as session:
+        job = (await session.exec(select(EmailOutbox))).one()
+        assert job.delivered_at and job.failed_at is None and job.last_error is None
+        assert job.user_id is None and job.lease_id is None
 
 
 async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
@@ -184,15 +252,17 @@ async def test_worker_renews_lease_during_delivery(
 ) -> None:
     polled = asyncio.Event()
     renewed = asyncio.Event()
+    sending = Event()
     finish_delivery = Event()
 
     def report_progress() -> None:
-        if polled.is_set():
+        if sending.is_set():
             renewed.set()
         else:
             polled.set()
 
     def smtp(**_data: str) -> None:
+        sending.set()
         assert finish_delivery.wait(timeout=10)
 
     async def track_renewal(session: AsyncSession, claimed: ClaimedEmail) -> bool:
@@ -398,6 +468,35 @@ async def test_admin_mail_probe_uses_configured_transport(
         connection.login.assert_called_once_with("test", "test-only")
         message = connection.send_message.call_args.args[0]
         assert message["To"] == "recipient@example.com"
+
+
+@pytest.mark.parametrize("disabled_setting", ["SMTP_HOST", "EMAILS_FROM_EMAIL"])
+async def test_admin_mail_probe_when_email_is_disabled(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    disabled_setting: str,
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    monkeypatch.setattr(settings, disabled_setting, None)
+
+    with (
+        patch("app.utils.SMTP") as smtp,
+        patch("app.utils.SMTP_SSL") as smtp_ssl,
+    ):
+        response = await client.post(
+            f"{settings.API_V1_STR}/utils/test-email/",
+            headers=superuser_token_headers,
+            params={"email_to": "recipient@example.com"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Email delivery is unavailable"}
+    smtp.assert_not_called()
+    smtp_ssl.assert_not_called()
 
 
 def test_legacy_recovery_access_logs_remove_sensitive_targets() -> None:

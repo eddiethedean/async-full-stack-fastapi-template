@@ -171,7 +171,9 @@ def clear_payload(row: EmailOutbox) -> None:
     row.key_version = None
 
 
-async def has_current_email_lease(session: AsyncSession, claimed: ClaimedEmail) -> bool:
+async def lock_current_email_lease(
+    session: AsyncSession, claimed: ClaimedEmail
+) -> bool:
     statement = (
         select(EmailOutbox.id)
         .where(
@@ -206,14 +208,15 @@ async def complete_email(
     error: str | None = None,
     retryable: bool = False,
 ) -> bool:
-    now = await database_now(session)
+    # Delivery holds the row lock from the lease check through this update.
+    # The active lease is judged at the start of that transaction.
     row = (
         await session.exec(
             select(EmailOutbox)
             .where(
                 col(EmailOutbox.id) == claimed.id,
                 col(EmailOutbox.lease_id) == claimed.lease_id,
-                col(EmailOutbox.lease_expires_at) > now,
+                col(EmailOutbox.lease_expires_at) > func.now(),
             )
             .with_for_update()
         )
@@ -221,6 +224,7 @@ async def complete_email(
     if row is None:
         return False
 
+    now = (await session.exec(select(func.clock_timestamp()))).one()
     row.last_error = error
     if error is None:
         row.delivered_at = now

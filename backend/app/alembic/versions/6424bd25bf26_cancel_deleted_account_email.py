@@ -10,6 +10,29 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # An invitation can hold "user" while it queues mail. A legacy welcome
+    # writer can take the locks in reverse order. Release the user lock on
+    # contention so either writer can finish before the backfill.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            FOR attempt IN 1..100 LOOP
+                BEGIN
+                    LOCK TABLE "user" IN SHARE ROW EXCLUSIVE MODE;
+                    LOCK TABLE email_outbox IN ACCESS EXCLUSIVE MODE NOWAIT;
+                    RETURN;
+                EXCEPTION WHEN lock_not_available THEN
+                    IF attempt = 100 THEN
+                        RAISE;
+                    END IF;
+                END;
+                PERFORM pg_sleep(0.1);
+            END LOOP;
+        END;
+        $$
+        """
+    )
     op.add_column("email_outbox", sa.Column("user_id", sa.Uuid(), nullable=True))
     op.execute(
         """

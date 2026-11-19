@@ -36,6 +36,10 @@ export FIRST_SUPERUSER=admin@example.com
 You can also configure these environment variables as needed:
 
 * `SMTP_HOST`: The SMTP server host from your email provider.
+* `SMTP_PORT`: The SMTP server port. Defaults to `587`.
+* `SMTP_TLS`: Whether to use STARTTLS. Defaults to `true`.
+* `SMTP_SSL`: Whether to use implicit TLS. Defaults to `false`.
+* `SMTP_TIMEOUT_SECONDS`: The SMTP connection timeout. Defaults to `15`.
 * `SMTP_USER`: The SMTP server user.
 * `EMAILS_FROM_EMAIL`: The email account used to send emails.
 * `SENTRY_DSN`: The DSN for Sentry.
@@ -50,25 +54,36 @@ export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))
 export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
-To use an authenticated email provider, also set `SMTP_PASSWORD`.
+Mail is disabled when `SMTP_HOST` or `EMAILS_FROM_EMAIL` is unset. To enable mail,
+define both and set `EMAIL_OUTBOX_KEYS` to a JSON object with a Fernet key for
+the active `EMAIL_OUTBOX_KEY_VERSION`, which defaults to `v1`. To use an
+authenticated provider, also set `SMTP_PASSWORD`.
 
 ## Deploy
 
 ```bash
 cd /root/code/app/
 export BACKEND_IMAGE="asf-backend:release-$(date -u +%Y%m%dT%H%M%SZ)"
-docker compose -f compose.yml -f compose.deploy.yml build backend
+docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml build backend
 bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
-docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
-docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
-docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
-docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
+docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml pull --ignore-buildable
+docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
+bash scripts/migrate-compose.sh --env-file /dev/null -f compose.yml -f compose.deploy.yml
+docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
 ```
 
 To promote the rehearsed image, load it onto the production host, set
 `BACKEND_IMAGE` to its loaded tag, and begin with the scan command.
 
-The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
+The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to
+the shared `compose.yml` configuration. The production commands use the
+exported settings and skip the tracked development `.env` file. To load
+settings from a deployment environment file, pass its path to `--env-file`.
+
+When upgrading an existing deployment, use its current Compose project name so
+Compose reuses the database and certificate volumes. If the name came from
+`.env`, export the same `COMPOSE_PROJECT_NAME` before running the production
+commands with `--env-file /dev/null`.
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
@@ -89,6 +104,10 @@ The workflow gives each build a unique image tag and scans the image on the
 deployment host before migrations. The API and worker start from that same
 local image.
 
+The workflow keeps Compose's existing project name resolution, including a
+`COMPOSE_PROJECT_NAME` in `.env`. The workflow's SMTP settings take precedence
+over `.env`, with production transport defaults for unset settings.
+
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 
 ### Configure Repository Variables and Secrets
@@ -102,8 +121,13 @@ In the repository, go to **Settings** > **Secrets and variables** > **Actions** 
 To enable emails, add these optional repository variables:
 
 * `SMTP_HOST`
+* `SMTP_PORT`
+* `SMTP_TLS`
+* `SMTP_SSL`
+* `SMTP_TIMEOUT_SECONDS`
 * `SMTP_USER`
 * `EMAILS_FROM_EMAIL`
+* `EMAIL_OUTBOX_KEY_VERSION`
 
 To enable Sentry, add the optional `SENTRY_DSN` repository variable.
 
@@ -116,7 +140,8 @@ Add these repository secrets:
 * `SECRET_KEY`
 * `FIRST_SUPERUSER_PASSWORD`
 
-To use an authenticated email provider, add the optional `SMTP_PASSWORD` repository secret.
+To enable mail, add the `EMAIL_OUTBOX_KEYS` repository secret. To use an
+authenticated provider, also add the `SMTP_PASSWORD` repository secret.
 
 ### Install a Self-Hosted Runner
 
@@ -158,10 +183,12 @@ Adminer: `https://adminer.fastapi-project.example.com`
 
 ## Account email delivery
 
-The `email-worker` service uses the backend image. Run the migrations before
-starting the API and worker. Add `EMAIL_OUTBOX_KEYS` to deployment secrets and
-`EMAIL_OUTBOX_KEY_VERSION` to deployment variables when configuring SMTP. Both
-services read the same settings. See [account email delivery](./deployment.md#account-email-delivery)
+The `email-worker` service uses the backend image. The migration script stops
+the previous worker and waits for it to exit before applying migrations. The
+last Compose command starts the worker from the new image. Add
+`EMAIL_OUTBOX_KEYS` to deployment secrets and `EMAIL_OUTBOX_KEY_VERSION` to
+deployment variables when configuring SMTP. Both services read the same
+settings. See [account email delivery](./deployment.md#account-email-delivery)
 for key setup, rotation, and retry behavior.
 
 The base Compose stack builds the unprivileged production image. The development
