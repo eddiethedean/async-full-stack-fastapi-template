@@ -1,13 +1,10 @@
-from datetime import UTC, datetime, timedelta
-from uuid import UUID
-
 import jwt
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
 
 from app.core.config import settings
-from app.models import TokenPayload
+from app.models import AuthSession, TokenPayload
 
 password_hash = PasswordHash(
     (
@@ -18,13 +15,21 @@ password_hash = PasswordHash(
 
 
 ALGORITHM = "HS256"
+TOKEN_ISSUER = "async-full-stack-fastapi"
+TOKEN_AUDIENCE = "api"
 
 
-def create_access_token(subject: UUID, expires_delta: timedelta) -> str:
-    expire = datetime.now(UTC) + expires_delta
-    to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+def create_access_token(auth_session: AuthSession) -> str:
+    payload = {
+        "exp": auth_session.expires_at,
+        "iat": auth_session.created_at,
+        "sub": str(auth_session.user_id),
+        "sid": str(auth_session.id),
+        "iss": TOKEN_ISSUER,
+        "aud": TOKEN_AUDIENCE,
+        "purpose": "access",
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_access_token(token: str) -> TokenPayload:
@@ -32,7 +37,9 @@ def decode_access_token(token: str) -> TokenPayload:
         token,
         settings.SECRET_KEY,
         algorithms=[ALGORITHM],
-        options={"require": ["exp", "sub"]},
+        issuer=TOKEN_ISSUER,
+        audience=TOKEN_AUDIENCE,
+        options={"require": ["exp", "iat", "sub", "sid", "iss", "aud", "purpose"]},
     )
     return TokenPayload.model_validate(payload)
 

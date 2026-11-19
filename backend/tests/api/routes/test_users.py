@@ -9,9 +9,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
+from app.core.db import create_session
 from app.core.security import verify_password
+from app.core.sessions import advance_auth_version, lock_user
 from app.models import User, UserCreate
-from tests.utils.user import create_random_user
+from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
 pytestmark = pytest.mark.anyio
@@ -222,15 +224,21 @@ async def test_retrieve_users(
         assert "email" in item
 
 
-async def test_update_user_me(
-    client: AsyncClient, normal_user_token_headers: dict[str, str], db: AsyncSession
-) -> None:
+async def test_update_user_me(client: AsyncClient, db: AsyncSession) -> None:
+    previous_email = random_email()
+    password = random_lower_string()
+    await crud.create_user(
+        session=db, user_create=UserCreate(email=previous_email, password=password)
+    )
+    headers = await user_authentication_headers(
+        client=client, email=previous_email, password=password
+    )
     full_name = "Updated Name"
     email = random_email()
     data = {"full_name": full_name, "email": email}
     r = await client.patch(
         f"{settings.API_V1_STR}/users/me",
-        headers=normal_user_token_headers,
+        headers=headers,
         json=data,
     )
     assert r.status_code == 200
@@ -243,49 +251,84 @@ async def test_update_user_me(
     assert user_db
     assert user_db.email == email
     assert user_db.full_name == full_name
+    assert (
+        await client.get(f"{settings.API_V1_STR}/users/me", headers=headers)
+    ).status_code == 401
 
 
-async def test_update_password_me(
-    client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
+async def test_profile_update_rechecks_credentials_after_lock(
+    client: AsyncClient, db: AsyncSession
 ) -> None:
+    email = random_email()
+    password = random_lower_string()
+    user = await crud.create_user(
+        session=db, user_create=UserCreate(email=email, password=password)
+    )
+    headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
+
+    async def rotate_credentials_before_profile_lock(
+        profile_session: AsyncSession, user_id: uuid.UUID
+    ) -> User | None:
+        async with create_session() as change_session:
+            changing_user = await lock_user(change_session, user_id)
+            assert changing_user is not None
+            await advance_auth_version(change_session, changing_user)
+            await change_session.commit()
+        return await lock_user(profile_session, user_id)
+
+    with patch(
+        "app.crud.lock_user", side_effect=rotate_credentials_before_profile_lock
+    ):
+        response = await client.patch(
+            f"{settings.API_V1_STR}/users/me",
+            headers=headers,
+            json={"email": random_email()},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    await db.refresh(user)
+    assert user.email == email
+
+
+async def test_update_password_me(client: AsyncClient, db: AsyncSession) -> None:
+    email = random_email()
+    password = random_lower_string()
+    user = await crud.create_user(
+        session=db, user_create=UserCreate(email=email, password=password)
+    )
+    headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
     new_password = random_lower_string()
     data = {
-        "current_password": settings.FIRST_SUPERUSER_PASSWORD,
+        "current_password": password,
         "new_password": new_password,
     }
     r = await client.patch(
         f"{settings.API_V1_STR}/users/me/password",
-        headers=superuser_token_headers,
+        headers=headers,
         json=data,
     )
     assert r.status_code == 200
     updated_user = r.json()
     assert updated_user["message"] == "Password updated successfully"
 
-    user_query = select(User).where(User.email == settings.FIRST_SUPERUSER)
-    user_db = (await db.exec(user_query)).first()
-    assert user_db
-    assert user_db.email == settings.FIRST_SUPERUSER
-    verified, _ = verify_password(new_password, user_db.hashed_password)
+    await db.refresh(user)
+    verified, _ = verify_password(new_password, user.hashed_password)
     assert verified
 
-    # Revert to the old password to keep consistency in test
-    old_data = {
-        "current_password": new_password,
-        "new_password": settings.FIRST_SUPERUSER_PASSWORD,
-    }
-    r = await client.patch(
-        f"{settings.API_V1_STR}/users/me/password",
-        headers=superuser_token_headers,
-        json=old_data,
+    assert (
+        await client.get(f"{settings.API_V1_STR}/users/me", headers=headers)
+    ).status_code == 401
+    new_headers = await user_authentication_headers(
+        client=client, email=email, password=new_password
     )
-    await db.refresh(user_db)
-
-    assert r.status_code == 200
-    verified, _ = verify_password(
-        settings.FIRST_SUPERUSER_PASSWORD, user_db.hashed_password
-    )
-    assert verified
+    assert (
+        await client.get(f"{settings.API_V1_STR}/users/me", headers=new_headers)
+    ).status_code == 200
 
 
 async def test_update_password_me_incorrect_password(

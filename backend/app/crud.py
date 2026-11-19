@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from psycopg.errors import UniqueViolation
 from pydantic import MISSING
@@ -8,7 +9,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.security import get_password_hash, verify_password
-from app.models import Item, ItemCreate, User, UserCreate, UserUpdate
+from app.core.sessions import advance_auth_version, lock_user
+from app.models import Item, ItemCreate, User, UserCreate, UserUpdate, UserUpdateMe
 
 
 class DuplicateEmailError(Exception):
@@ -40,15 +42,66 @@ async def create_user(*, session: AsyncSession, user_create: UserCreate) -> User
 
 
 async def update_user(
-    *, session: AsyncSession, db_user: User, user_in: UserUpdate
-) -> User:
+    *,
+    session: AsyncSession,
+    db_user: User,
+    user_in: UserUpdate | UserUpdateMe,
+    expected_auth_version: int | None = None,
+) -> User | None:
     user_data = user_in.model_dump(exclude_unset=True, exclude={"password"})
-    if user_in.password is not MISSING:
-        user_data["hashed_password"] = await run_in_threadpool(
-            get_password_hash, user_in.password
-        )
-    db_user.sqlmodel_update(user_data)
-    return await commit_user(session, db_user)
+    new_hash = None
+    if isinstance(user_in, UserUpdate) and user_in.password is not MISSING:
+        new_hash = await run_in_threadpool(get_password_hash, user_in.password)
+    user = await lock_user(session, db_user.id)
+    if user is None:
+        return None
+    # A credential change may have committed after the request authenticated.
+    if expected_auth_version is not None and (
+        not user.is_active or user.auth_version != expected_auth_version
+    ):
+        return None
+    credentials_changed = (
+        new_hash is not None
+        or user_data.get("email", user.email) != user.email
+        or (user.is_active and user_data.get("is_active") is False)
+    )
+    user.sqlmodel_update(user_data)
+    if new_hash is not None:
+        user.hashed_password = new_hash
+    if credentials_changed:
+        await advance_auth_version(session, user)
+    return await commit_user(session, user)
+
+
+async def change_password(
+    *, session: AsyncSession, user: User, current_password: str, new_password: str
+) -> Literal["changed", "incorrect", "unchanged"]:
+    previous_hash = user.hashed_password
+    previous_version = user.auth_version
+    verified, _ = await run_in_threadpool(
+        verify_password, current_password, previous_hash
+    )
+    if not verified:
+        return "incorrect"
+    if current_password == new_password:
+        return "unchanged"
+    new_hash = await run_in_threadpool(get_password_hash, new_password)
+    locked = await lock_user(session, user.id)
+    if (
+        locked is None
+        or not locked.is_active
+        or locked.auth_version != previous_version
+    ):
+        return "incorrect"
+    await set_password(session, locked, new_hash)
+    await session.commit()
+    return "changed"
+
+
+async def set_password(session: AsyncSession, user: User, new_hash: str) -> None:
+    """Change the password of a locked user in the caller's transaction."""
+    user.hashed_password = new_hash
+    await advance_auth_version(session, user)
 
 
 async def get_user_by_email(*, session: AsyncSession, email: str) -> User | None:
@@ -63,7 +116,7 @@ DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZm
 
 
 async def authenticate(
-    *, session: AsyncSession, email: str, password: str
+    *, session: AsyncSession, email: str, password: str, commit: bool = True
 ) -> User | None:
     db_user = await get_user_by_email(session=session, email=email)
     if not db_user:
@@ -71,17 +124,23 @@ async def authenticate(
         # This ensures the response time is similar whether or not the email exists
         await run_in_threadpool(verify_password, password, DUMMY_HASH)
         return None
+    previous_version = db_user.auth_version
+    previous_hash = db_user.hashed_password
     verified, updated_password_hash = await run_in_threadpool(
-        verify_password, password, db_user.hashed_password
+        verify_password, password, previous_hash
     )
     if not verified:
         return None
-    if updated_password_hash:
-        db_user.hashed_password = updated_password_hash
-        session.add(db_user)
+    user = await lock_user(session, db_user.id)
+    if user is None or not user.is_active or user.auth_version != previous_version:
+        return None
+    if updated_password_hash and user.hashed_password == previous_hash:
+        user.hashed_password = updated_password_hash
+        session.add(user)
+    # Login routes hold this lock until the session record is committed.
+    if commit:
         await session.commit()
-        await session.refresh(db_user)
-    return db_user
+    return user
 
 
 async def create_item(

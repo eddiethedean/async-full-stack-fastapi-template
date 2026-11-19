@@ -10,13 +10,21 @@ from app import crud
 from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security
 from app.core.config import settings
-from app.models import Message, NewPassword, Token, UserPublic, UserUpdate
-from app.utils import (
-    generate_password_reset_token,
-    generate_reset_password_email,
-    send_email,
-    verify_password_reset_token,
+from app.core.sessions import (
+    consume_account_action,
+    find_account_action_user_id,
+    issue_account_action,
+    lock_user,
 )
+from app.models import (
+    AuthSession,
+    Message,
+    NewPassword,
+    Token,
+    UserPublic,
+    get_datetime_utc,
+)
+from app.utils import generate_reset_password_email, send_email
 
 router = APIRouter(tags=["login"])
 
@@ -29,18 +37,24 @@ async def login_access_token(
     OAuth2 compatible token login, get an access token for future requests
     """
     user = await crud.authenticate(
-        session=session, email=form_data.username, password=form_data.password
+        session=session,
+        email=form_data.username,
+        password=form_data.password,
+        commit=False,
     )
-    if not user:
+    if user is None:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    elif not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return Token(
-        access_token=security.create_access_token(
-            user.id, expires_delta=access_token_expires
-        )
+    now = get_datetime_utc()
+    auth_session = AuthSession(
+        user_id=user.id,
+        kind="bearer",
+        auth_version=user.auth_version,
+        created_at=now,
+        expires_at=now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
+    session.add(auth_session)
+    await session.commit()
+    return Token(access_token=security.create_access_token(auth_session))
 
 
 @router.post("/login/test-token", response_model=UserPublic)
@@ -56,12 +70,24 @@ async def recover_password(email: str, session: SessionDep) -> Message:
     """
     Password Recovery
     """
-    user = await crud.get_user_by_email(session=session, email=email)
+    user = (
+        await crud.get_user_by_email(session=session, email=email)
+        if settings.emails_enabled
+        else None
+    )
 
     # Always return the same response to prevent email enumeration attacks
     # Only send email if user actually exists
-    if user:
-        password_reset_token = generate_password_reset_token(email=email)
+    if user is not None:
+        user = await lock_user(session, user.id)
+    if user is not None and user.is_active and user.email == email:
+        password_reset_token = issue_account_action(
+            session,
+            user,
+            purpose="password_reset",
+            expires_delta=timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS),
+        )
+        await session.commit()
         email_data = await run_in_threadpool(
             generate_reset_password_email,
             email_to=user.email,
@@ -84,21 +110,17 @@ async def reset_password(session: SessionDep, body: NewPassword) -> Message:
     """
     Reset password
     """
-    email = verify_password_reset_token(token=body.token)
-    if not email:
+    if (
+        await find_account_action_user_id(session, body.token, purpose="password_reset")
+        is None
+    ):
         raise HTTPException(status_code=400, detail="Invalid token")
-    user = await crud.get_user_by_email(session=session, email=email)
-    if not user:
-        # Don't reveal that the user doesn't exist - use same error as invalid token
+    new_hash = await run_in_threadpool(security.get_password_hash, body.new_password)
+    user = await consume_account_action(session, body.token, purpose="password_reset")
+    if user is None:
         raise HTTPException(status_code=400, detail="Invalid token")
-    elif not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    user_in_update = UserUpdate(password=body.new_password)
-    await crud.update_user(
-        session=session,
-        db_user=user,
-        user_in=user_in_update,
-    )
+    await crud.set_password(session, user, new_hash)
+    await session.commit()
     return Message(message="Password updated successfully")
 
 
@@ -118,14 +140,13 @@ async def recover_password_html_content(email: str, session: SessionDep) -> Any:
             status_code=404,
             detail="The user with this username does not exist in the system.",
         )
-    password_reset_token = generate_password_reset_token(email=email)
     email_data = await run_in_threadpool(
         generate_reset_password_email,
         email_to=user.email,
         email=email,
-        token=password_reset_token,
+        token="preview-only",
     )
 
     return HTMLResponse(
-        content=email_data.html_content, headers={"subject:": email_data.subject}
+        content=email_data.html_content, headers={"Subject": email_data.subject}
     )

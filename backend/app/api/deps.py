@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core import security
 from app.core.config import settings
 from app.core.db import create_session
-from app.models import User
+from app.models import AuthSession, User, get_datetime_utc
 
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token"
@@ -34,14 +34,41 @@ def get_credentials_error() -> HTTPException:
     )
 
 
-async def get_current_user(session: SessionDep, token: TokenDep) -> User:
+async def get_bearer_session(
+    session: AsyncSession, token: str
+) -> tuple[AuthSession, User]:
     try:
-        token_data = security.decode_access_token(token)
+        claims = security.decode_access_token(token)
     except InvalidTokenError, ValidationError:
         raise get_credentials_error()
-    user = await session.get(User, token_data.sub)
-    if user is None or not user.is_active:
+    auth_session = await session.get(AuthSession, claims.sid)
+    if (
+        auth_session is None
+        or auth_session.kind != "bearer"
+        or auth_session.user_id != claims.sub
+    ):
         raise get_credentials_error()
+    return auth_session, await get_session_user(session, auth_session)
+
+
+async def get_session_user(session: AsyncSession, auth_session: AuthSession) -> User:
+    if (
+        auth_session.revoked_at is not None
+        or auth_session.expires_at <= get_datetime_utc()
+    ):
+        raise get_credentials_error()
+    user = await session.get(User, auth_session.user_id)
+    if (
+        user is None
+        or not user.is_active
+        or user.auth_version != auth_session.auth_version
+    ):
+        raise get_credentials_error()
+    return user
+
+
+async def get_current_user(session: SessionDep, token: TokenDep) -> User:
+    _, user = await get_bearer_session(session, token)
     return user
 
 

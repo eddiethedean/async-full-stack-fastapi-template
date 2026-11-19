@@ -87,6 +87,9 @@ test.describe("Edit user email", () => {
 
     expect((await update).postDataJSON()).toEqual({ email: updatedEmail })
     await expect(page.getByText("User updated successfully")).toBeVisible()
+    await expect(page).toHaveURL("/login")
+    await logInUser(page, updatedEmail, password)
+    await page.goto("/settings")
     await expect(
       page.locator("form").getByText(updatedEmail, { exact: true }),
     ).toBeVisible()
@@ -154,7 +157,7 @@ test.describe("Change password", () => {
 
     await expect(page.getByText("Password updated successfully")).toBeVisible()
 
-    await logOutUser(page)
+    await expect(page).toHaveURL("/login")
     await logInUser(page, email, newPassword)
   })
 })

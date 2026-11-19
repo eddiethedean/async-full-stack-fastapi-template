@@ -9,11 +9,11 @@ from app import crud
 from app.api.deps import (
     CurrentUser,
     SessionDep,
+    get_credentials_error,
     get_current_active_superuser,
 )
 from app.api.pagination import PaginationDep, fetch_page
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
 from app.models import (
     Item,
     Message,
@@ -85,9 +85,15 @@ async def update_user_me(
     Update own user.
     """
 
-    user_data = user_in.model_dump(exclude_unset=True)
-    current_user.sqlmodel_update(user_data)
-    return await crud.commit_user(session, current_user)
+    user = await crud.update_user(
+        session=session,
+        db_user=current_user,
+        user_in=user_in,
+        expected_auth_version=current_user.auth_version,
+    )
+    if user is None:
+        raise get_credentials_error()
+    return user
 
 
 @router.patch("/me/password", response_model=Message)
@@ -97,19 +103,18 @@ async def update_password_me(
     """
     Update own password.
     """
-    verified, _ = await run_in_threadpool(
-        verify_password, body.current_password, current_user.hashed_password
+    result = await crud.change_password(
+        session=session,
+        user=current_user,
+        current_password=body.current_password,
+        new_password=body.new_password,
     )
-    if not verified:
+    if result == "incorrect":
         raise HTTPException(status_code=400, detail="Incorrect password")
-    if body.current_password == body.new_password:
+    if result == "unchanged":
         raise HTTPException(
             status_code=400, detail="New password cannot be the same as the current one"
         )
-    hashed_password = await run_in_threadpool(get_password_hash, body.new_password)
-    current_user.hashed_password = hashed_password
-    session.add(current_user)
-    await session.commit()
     return Message(message="Password updated successfully")
 
 
@@ -186,7 +191,10 @@ async def update_user(
             status_code=404,
             detail="The user with this id does not exist in the system",
         )
-    return await crud.update_user(session=session, db_user=db_user, user_in=user_in)
+    db_user = await crud.update_user(session=session, db_user=db_user, user_in=user_in)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
 
 
 @router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])

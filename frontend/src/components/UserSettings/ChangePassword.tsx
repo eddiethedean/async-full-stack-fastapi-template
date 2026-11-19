@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/form"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
+import useAuth from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
 import { usePrivateMutation } from "@/hooks/usePrivateMutation"
 import { handleError } from "@/utils"
@@ -39,6 +40,7 @@ const formSchema = z
 type FormData = z.infer<typeof formSchema>
 
 const ChangePassword = () => {
+  const { logout } = useAuth()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -57,6 +59,7 @@ const ChangePassword = () => {
     onSuccess: () => {
       showSuccessToast("Password updated successfully")
       form.reset()
+      void logout()
     },
     onError: handleError.bind(showErrorToast),
   })
