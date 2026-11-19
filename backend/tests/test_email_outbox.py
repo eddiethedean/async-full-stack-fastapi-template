@@ -311,6 +311,35 @@ async def test_admin_mail_probe_uses_configured_transport(
         assert message["To"] == "recipient@example.com"
 
 
+@pytest.mark.parametrize("disabled_setting", ["SMTP_HOST", "EMAILS_FROM_EMAIL"])
+async def test_admin_mail_probe_when_email_is_disabled(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    disabled_setting: str,
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    monkeypatch.setattr(settings, disabled_setting, None)
+
+    with (
+        patch("app.utils.SMTP") as smtp,
+        patch("app.utils.SMTP_SSL") as smtp_ssl,
+    ):
+        response = await client.post(
+            f"{settings.API_V1_STR}/utils/test-email/",
+            headers=superuser_token_headers,
+            params={"email_to": "recipient@example.com"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Email delivery is unavailable"}
+    smtp.assert_not_called()
+    smtp_ssl.assert_not_called()
+
+
 def test_legacy_recovery_access_logs_remove_sensitive_targets() -> None:
     for original, expected in (
         (
