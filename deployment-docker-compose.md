@@ -60,6 +60,15 @@ The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to t
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
+The deployment puts Traefik and the API on a dedicated ingress network. Uvicorn
+trusts the Traefik peer on that network when resolving the client address for
+[authentication rate limits](./deployment.md#authentication-rate-limits).
+Set the `RATE_LIMIT_*` variables in your deployment environment to override
+the thresholds. If the ingress subnet overlaps another network on the host,
+set `TRAEFIK_INGRESS_SUBNET` and an unused `TRAEFIK_INGRESS_IP` within it.
+Set `FORWARDED_ALLOW_IPS` only when you need to customize the trusted proxy
+addresses. Include the Traefik ingress address when Traefik serves the API.
+
 ## Deploy with GitHub Actions
 
 Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
@@ -81,6 +90,9 @@ To enable emails, add these optional repository variables:
 * `EMAILS_FROM_EMAIL`
 
 To enable Sentry, add the optional `SENTRY_DSN` repository variable.
+
+The workflow also accepts the optional rate-limit and ingress variables
+described above as repository variables.
 
 Add these repository secrets:
 

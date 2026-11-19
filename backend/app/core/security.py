@@ -2,6 +2,7 @@ import jwt
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
+from pydantic.networks import validate_email
 
 from app.core.config import settings
 from app.models import AuthSession, TokenPayload
@@ -17,6 +18,13 @@ password_hash = PasswordHash(
 ALGORITHM = "HS256"
 TOKEN_ISSUER = "async-full-stack-fastapi"
 TOKEN_AUDIENCE = "api"
+
+
+def normalize_account_email(email: str) -> str:
+    try:
+        return validate_email(email)[1]
+    except ValueError:
+        return email.strip()
 
 
 def create_access_token(auth_session: AuthSession) -> str:

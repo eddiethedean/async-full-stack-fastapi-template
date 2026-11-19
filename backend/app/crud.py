@@ -9,7 +9,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.core.security import get_password_hash, verify_password
+from app.core.security import (
+    get_password_hash,
+    normalize_account_email,
+    verify_password,
+)
 from app.core.sessions import advance_auth_version, lock_user
 from app.models import Item, ItemCreate, User, UserCreate, UserUpdate, UserUpdateMe
 
@@ -131,7 +135,7 @@ async def set_password(session: AsyncSession, user: User, new_hash: str) -> None
 
 
 async def get_user_by_email(*, session: AsyncSession, email: str) -> User | None:
-    statement = select(User).where(User.email == email)
+    statement = select(User).where(User.email == normalize_account_email(email))
     result = await session.exec(statement)
     return result.first()
 

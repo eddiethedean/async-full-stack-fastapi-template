@@ -14,7 +14,14 @@ def pytest_configure() -> None:
         os.environ["DATABASE_URL"] = test_database_url()
     except ValueError as exc:
         raise pytest.UsageError(str(exc)) from None
-    os.environ.update(FASTAPI_ENV="development", ENABLE_TEST_ROUTES="true")
+    # The shared fixture signs into the same admin account throughout the suite.
+    # The limiter tests set their own small thresholds.
+    os.environ.update(
+        FASTAPI_ENV="development",
+        ENABLE_TEST_ROUTES="true",
+        RATE_LIMIT_LOGIN_ACCOUNT="500",
+        RATE_LIMIT_LOGIN_SOURCE="500",
+    )
 
 
 @pytest.fixture(scope="session")

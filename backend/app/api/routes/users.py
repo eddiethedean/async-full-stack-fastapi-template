@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import col, delete
 from starlette.concurrency import run_in_threadpool
 
@@ -16,6 +16,7 @@ from app.api.deps import (
 )
 from app.api.pagination import PaginationDep, fetch_page
 from app.core.config import settings
+from app.core.rate_limits import enforce_rate_limit
 from app.core.security import get_password_hash
 from app.core.sessions import issue_account_action
 from app.email_outbox import enqueue_email
@@ -178,10 +179,13 @@ async def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
 
 
 @router.post("/signup", response_model=UserPublic, responses=email_conflict)
-async def register_user(session: SessionDep, user_in: UserRegister) -> Any:
+async def register_user(
+    session: SessionDep, user_in: UserRegister, request: Request
+) -> Any:
     """
     Create new user without the need to be logged in.
     """
+    await enforce_rate_limit(request, action="signup", email=user_in.email)
     user_create = UserCreate.model_validate(user_in)
     return await crud.create_user(session=session, user_create=user_create)
 

@@ -2,6 +2,10 @@ services:
 
   proxy:
     restart: always
+    networks:
+      default: {}
+      ingress:
+        ipv4_address: ${TRAEFIK_INGRESS_IP:-172.30.240.2}
     ports:
       # Listen on port 80, default for HTTP, necessary to redirect to HTTPS
       - "80:80"
@@ -44,9 +48,14 @@ services:
 
   backend:
     restart: always
+    networks:
+      - default
+      - ingress
     environment:
       FRONTEND_HOST: https://${DOMAIN:?Variable not set}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-${TRAEFIK_INGRESS_IP:-172.30.240.2}}
     labels:
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}-ingress
       # Route HTTPS traffic for this domain
       - traefik.http.routers.backend-https.rule=Host(`${DOMAIN:?Variable not set}`)
       - traefik.http.routers.backend-https.entrypoints=https
@@ -58,6 +67,14 @@ services:
     restart: on-failure
     environment:
       FRONTEND_HOST: https://${DOMAIN:?Variable not set}
+
+networks:
+  ingress:
+    name: ${COMPOSE_PROJECT_NAME}-ingress
+    internal: true
+    ipam:
+      config:
+        - subnet: ${TRAEFIK_INGRESS_SUBNET:-172.30.240.0/28}
 
 volumes:
   # Create a volume to store the certificates, even if the container is recreated

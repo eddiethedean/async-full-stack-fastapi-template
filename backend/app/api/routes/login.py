@@ -2,7 +2,7 @@ import hashlib
 from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import col, select
@@ -12,6 +12,7 @@ from app import crud
 from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security
 from app.core.config import settings
+from app.core.rate_limits import enforce_rate_limit
 from app.core.sessions import (
     advance_auth_version,
     consume_account_action,
@@ -36,11 +37,14 @@ router = APIRouter(tags=["login"])
 
 @router.post("/login/access-token")
 async def login_access_token(
-    session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+    request: Request,
+    session: SessionDep,
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> Token:
     """
     OAuth2 compatible token login, get an access token for future requests
     """
+    await enforce_rate_limit(request, action="login", email=form_data.username)
     user = await crud.authenticate(
         session=session,
         email=form_data.username,
@@ -70,12 +74,14 @@ def test_token(current_user: CurrentUser) -> Any:
     return current_user
 
 
-async def queue_recovery(email: str, session: SessionDep) -> Message:
+async def queue_recovery(email: str, session: SessionDep, request: Request) -> Message:
+    await enforce_rate_limit(request, action="recovery", email=email)
     if settings.emails_enabled:
+        account_email = security.normalize_account_email(email)
         user = (
             await session.exec(
                 select(User)
-                .where(col(User.email) == email, col(User.is_active).is_(True))
+                .where(col(User.email) == account_email, col(User.is_active).is_(True))
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -101,14 +107,16 @@ async def queue_recovery(email: str, session: SessionDep) -> Message:
 
 @router.post("/password-recovery")
 async def recover_password_by_email(
-    body: RecoveryRequest, session: SessionDep
+    body: RecoveryRequest, session: SessionDep, request: Request
 ) -> Message:
-    return await queue_recovery(body.email, session)
+    return await queue_recovery(body.email, session, request)
 
 
 @router.post("/password-recovery/{email}", deprecated=True)
-async def recover_password(email: str, session: SessionDep) -> Message:
-    return await queue_recovery(email, session)
+async def recover_password(
+    email: str, session: SessionDep, request: Request
+) -> Message:
+    return await queue_recovery(email, session, request)
 
 
 @router.post("/invitations/accept")

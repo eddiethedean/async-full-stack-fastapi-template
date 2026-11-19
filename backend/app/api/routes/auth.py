@@ -24,6 +24,7 @@ from app.core.browser_auth import (
     set_session_cookie,
 )
 from app.core.config import settings
+from app.core.rate_limits import enforce_rate_limit
 from app.core.sessions import (
     generate_opaque_token,
     lock_user,
@@ -68,6 +69,7 @@ async def create_browser_session(
     check_origin(request)
     if "authorization" in request.headers:
         raise get_credentials_error()
+    await enforce_rate_limit(request, action="login", email=body.username)
     user = await crud.authenticate(
         session=session, email=body.username, password=body.password, commit=False
     )

@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     def emails_enabled(self) -> bool:
         return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
 
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(default=300, ge=1, le=86400)
+    RATE_LIMIT_LOGIN_ACCOUNT: int = Field(default=30, ge=1, le=100000)
+    RATE_LIMIT_LOGIN_SOURCE: int = Field(default=120, ge=1, le=100000)
+    RATE_LIMIT_SIGNUP_ACCOUNT: int = Field(default=5, ge=1, le=100000)
+    RATE_LIMIT_SIGNUP_SOURCE: int = Field(default=30, ge=1, le=100000)
+    RATE_LIMIT_RECOVERY_ACCOUNT: int = Field(default=5, ge=1, le=100000)
+    RATE_LIMIT_RECOVERY_SOURCE: int = Field(default=30, ge=1, le=100000)
+
     EMAIL_TEST_USER: EmailStr = "test@example.com"
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str

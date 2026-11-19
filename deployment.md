@@ -114,3 +114,22 @@ twice with the same message ID and the same single-use link. Check the
 `email_outbox` delivery status and safe error categories when diagnosing a job.
 Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
+
+## Authentication rate limits
+
+The API counts login (cookie and bearer), signup, and recovery requests in
+PostgreSQL. The default window is 300 seconds. Per-account and per-source
+thresholds are 30 and 120 for login, 5 and 30 for signup, and 5 and 30 for recovery.
+Override `RATE_LIMIT_WINDOW_SECONDS` or the `RATE_LIMIT_LOGIN_ACCOUNT`,
+`RATE_LIMIT_LOGIN_SOURCE`, `RATE_LIMIT_SIGNUP_ACCOUNT`,
+`RATE_LIMIT_SIGNUP_SOURCE`, `RATE_LIMIT_RECOVERY_ACCOUNT`, and
+`RATE_LIMIT_RECOVERY_SOURCE` settings across the API replicas. The returned
+`Retry-After` header tells clients when to retry. When the datastore is
+unavailable these endpoints respond with 503.
+
+For requests arriving through a proxy, configure Uvicorn's
+`FORWARDED_ALLOW_IPS` with only trusted ingress addresses or CIDRs, and ensure
+the ingress strips untrusted forwarded headers. The API uses the client
+address the server resolved. With direct internet traffic, leave forwarded
+address trust disabled for remote peers. The
+`auth.rate_limit.requests` metric reports decisions by action and outcome.
