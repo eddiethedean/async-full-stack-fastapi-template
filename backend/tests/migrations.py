@@ -204,15 +204,17 @@ def verify_uuid_downgrade() -> None:
     database_url = test_database_url()
     integer_revision = "9c0a54914c78"
     uuid_revision = "d98dd8ec85a3"
+    ownerless_item_id = UUID("00000000-0000-4000-8000-000000000003")
+    migration_env = {
+        **os.environ,
+        "DATABASE_URL": database_url,
+        "FASTAPI_ENV": "development",
+    }
 
     def migrate(direction: str, revision: str) -> None:
         subprocess.run(
             ["alembic", direction, revision],
-            env={
-                **os.environ,
-                "DATABASE_URL": database_url,
-                "FASTAPI_ENV": "development",
-            },
+            env=migration_env,
             check=True,
         )
 
@@ -241,6 +243,46 @@ def verify_uuid_downgrade() -> None:
             conn.execute(insert_item, {"title": "Before UUIDs", "owner": owner})
 
         migrate("upgrade", uuid_revision)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO item (id, title) VALUES (:id, 'Ownerless UUID item')"
+                ),
+                {"id": ownerless_item_id},
+            )
+
+        failed = subprocess.run(
+            ["alembic", "downgrade", integer_revision],
+            env=migration_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert f"Item {ownerless_item_id} has no owner" in failed.stderr
+        assert "Assign a verified owner before retrying" in failed.stderr
+        with engine.begin() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == uuid_revision
+            )
+            assert (
+                conn.execute(
+                    text("SELECT owner_id FROM item WHERE id = :id"),
+                    {"id": ownerless_item_id},
+                ).scalar_one()
+                is None
+            )
+            conn.execute(
+                text(
+                    'UPDATE item SET owner_id = (SELECT id FROM "user" WHERE email = :email) '
+                    "WHERE id = :id"
+                ),
+                {"email": email, "id": ownerless_item_id},
+            )
+
         migrate("downgrade", integer_revision)
         with engine.begin() as conn:
             assert conn.execute(columns).all() == original_columns
@@ -252,6 +294,12 @@ def verify_uuid_downgrade() -> None:
                 {"email": email},
             ).one()
             assert original_owner == item_owner
+            repaired_item, repaired_owner = conn.execute(
+                text(
+                    "SELECT id, owner_id FROM item WHERE title = 'Ownerless UUID item'"
+                )
+            ).one()
+            assert repaired_owner == original_owner
             new_owner = conn.execute(
                 insert_user, {"email": "after-rollback@example.com"}
             ).scalar_one()
@@ -259,7 +307,7 @@ def verify_uuid_downgrade() -> None:
                 insert_item, {"title": "After rollback", "owner": new_owner}
             ).scalar_one()
             assert new_owner > original_owner
-            assert new_item > original_item
+            assert new_item > max(original_item, repaired_item)
         migrate("downgrade", "base")
     finally:
         engine.dispose()

@@ -55,6 +55,29 @@ def upgrade():
     op.create_foreign_key('item_owner_id_fkey', 'item', 'user', ['owner_id'], ['id'])
 
 def downgrade():
+    # Hold the same locks as the ALTERs so writes cannot invalidate the preflight.
+    op.execute('LOCK TABLE "user", item IN ACCESS EXCLUSIVE MODE')
+    op.execute("""
+        DO $$
+        DECLARE
+            ownerless_item uuid;
+        BEGIN
+            SELECT id INTO ownerless_item
+            FROM item
+            WHERE owner_id IS NULL
+            ORDER BY id
+            LIMIT 1;
+
+            IF FOUND THEN
+                RAISE EXCEPTION USING
+                    MESSAGE = 'Revision d98dd8ec85a3 cannot restore required ownership. Item '
+                        || ownerless_item || ' has no owner.',
+                    HINT = 'Assign a verified owner before retrying. See deployment.md under Item ownership on UUID downgrade.';
+            END IF;
+        END
+        $$;
+    """)
+
     # Reverse the upgrade process
     op.add_column('user', sa.Column('old_id', sa.Integer, autoincrement=True))
     op.add_column('item', sa.Column('old_id', sa.Integer, autoincrement=True))
