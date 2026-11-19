@@ -18,6 +18,42 @@ depends_on = None
 
 
 def upgrade():
+    # Hold the same locks as the ALTERs so writes cannot invalidate the preflight.
+    op.execute('LOCK TABLE "user", item IN ACCESS EXCLUSIVE MODE')
+    op.execute("""
+        DO $$
+        DECLARE
+            oversized record;
+        BEGIN
+            SELECT * INTO oversized
+            FROM (
+                SELECT 'user' AS table_name, u.id, fields.*
+                FROM "user" AS u
+                CROSS JOIN LATERAL (VALUES
+                    ('email', char_length(u.email)),
+                    ('full_name', char_length(u.full_name))
+                ) AS fields(column_name, characters)
+                UNION ALL
+                SELECT 'item', i.id, fields.*
+                FROM item AS i
+                CROSS JOIN LATERAL (VALUES
+                    ('title', char_length(i.title)),
+                    ('description', char_length(i.description))
+                ) AS fields(column_name, characters)
+            ) AS candidates
+            WHERE characters > 255
+            LIMIT 1;
+
+            IF FOUND THEN
+                RAISE EXCEPTION
+                    'Revision 9c0a54914c78 cannot narrow %.% for row ID % with % characters (limit 255).',
+                    oversized.table_name, oversized.column_name, oversized.id, oversized.characters
+                    USING HINT = 'Preserve the original data and review oversized values before retrying. See deployment.md under Historical text migration.';
+            END IF;
+        END
+        $$;
+    """)
+
     # Adjust the length of the email field in the User table
     op.alter_column('user', 'email',
                existing_type=sa.String(),
