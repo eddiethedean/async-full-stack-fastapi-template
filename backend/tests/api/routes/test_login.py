@@ -7,6 +7,7 @@ import jwt
 import pytest
 from httpx import AsyncClient
 from pwdlib.hashers.bcrypt import BcryptHasher
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
@@ -20,6 +21,7 @@ from app.core.security import (
 )
 from app.core.sessions import AccountAction, issue_account_action, lock_user
 from app.crud import create_user
+from app.email_outbox import EmailOutbox
 from app.models import AuthSession, User, UserCreate, get_datetime_utc
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -117,23 +119,29 @@ async def test_unusable_access_credentials(
 
 
 async def test_recovery_password(
-    client: AsyncClient, normal_user_token_headers: dict[str, str]
+    client: AsyncClient, normal_user_token_headers: dict[str, str], db: AsyncSession
 ) -> None:
+    assert normal_user_token_headers
     with (
-        patch("app.api.routes.login.send_email", return_value=None) as send_email,
         patch.object(settings, "SMTP_HOST", "smtp.example.com"),
         patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
     ):
-        email = "test@example.com"
-        r = await client.post(
-            f"{settings.API_V1_STR}/password-recovery/{email}",
-            headers=normal_user_token_headers,
+        response = await client.post(
+            f"{settings.API_V1_STR}/password-recovery",
+            json={"email": settings.EMAIL_TEST_USER},
         )
-        assert r.status_code == 200
-        assert r.json() == {
-            "message": "If that email is registered, we sent a password recovery link"
-        }
-        send_email.assert_called_once()
+    assert response.status_code == 200
+    assert response.json() == {
+        "message": "If that email is registered, we sent a password recovery link"
+    }
+    job = (
+        await db.exec(
+            select(EmailOutbox)
+            .where(col(EmailOutbox.recipient) == settings.EMAIL_TEST_USER)
+            .order_by(col(EmailOutbox.created_at).desc())
+        )
+    ).first()
+    assert job and job.kind == "password_reset" and job.payload
 
 
 async def test_recovery_password_user_not_exits(

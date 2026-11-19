@@ -13,8 +13,6 @@ services:
       - --providers.docker.exposedbydefault=false
       # Create an entrypoint "http" listening on port 80
       - --entrypoints.http.address=:80
-      # Enable the access log, with HTTP requests
-      - --accesslog
       # Enable the Traefik log, for configurations and errors
       - --log
       # Enable debug logging for local development
@@ -69,6 +67,16 @@ services:
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
+
+  email-worker:
+    environment:
+      FASTAPI_ENV: "development"
+      SMTP_HOST: "mailpit"
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+    depends_on:
+      mailpit:
+        condition: service_started
 
   mailpit:
     image: axllent/mailpit

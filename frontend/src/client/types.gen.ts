@@ -170,6 +170,16 @@ export type NewPassword = {
 };
 
 /**
+ * RecoveryRequest
+ */
+export type RecoveryRequest = {
+    /**
+     * Email
+     */
+    email: string;
+};
+
+/**
  * Token
  */
 export type Token = {
@@ -224,6 +234,24 @@ export type UserCreate = {
 };
 
 /**
+ * UserInvite
+ */
+export type UserInvite = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name?: string | null;
+    /**
+     * Is Superuser
+     */
+    is_superuser?: boolean;
+};
+
+/**
  * UserPublic
  */
 export type UserPublic = {
@@ -243,6 +271,10 @@ export type UserPublic = {
      * Full Name
      */
     full_name?: string | null;
+    /**
+     * Invitation Pending
+     */
+    invitation_pending?: boolean;
     /**
      * Id
      */
@@ -481,6 +513,31 @@ export type loginTestTokenResponses = {
 
 export type loginTestTokenResponse = loginTestTokenResponses[keyof loginTestTokenResponses];
 
+export type loginRecoverPasswordByEmailData = {
+    body: RecoveryRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/password-recovery';
+};
+
+export type loginRecoverPasswordByEmailErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type loginRecoverPasswordByEmailError = loginRecoverPasswordByEmailErrors[keyof loginRecoverPasswordByEmailErrors];
+
+export type loginRecoverPasswordByEmailResponses = {
+    /**
+     * Successful Response
+     */
+    200: Message;
+};
+
+export type loginRecoverPasswordByEmailResponse = loginRecoverPasswordByEmailResponses[keyof loginRecoverPasswordByEmailResponses];
+
 export type loginRecoverPasswordData = {
     body?: never;
     path: {
@@ -510,6 +567,31 @@ export type loginRecoverPasswordResponses = {
 };
 
 export type loginRecoverPasswordResponse = loginRecoverPasswordResponses[keyof loginRecoverPasswordResponses];
+
+export type loginAcceptInvitationData = {
+    body: NewPassword;
+    path?: never;
+    query?: never;
+    url: '/api/v1/invitations/accept';
+};
+
+export type loginAcceptInvitationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type loginAcceptInvitationError = loginAcceptInvitationErrors[keyof loginAcceptInvitationErrors];
+
+export type loginAcceptInvitationResponses = {
+    /**
+     * Successful Response
+     */
+    200: Message;
+};
+
+export type loginAcceptInvitationResponse = loginAcceptInvitationResponses[keyof loginAcceptInvitationResponses];
 
 export type loginResetPasswordData = {
     body: NewPassword;
@@ -628,6 +710,35 @@ export type usersCreateUserResponses = {
 };
 
 export type usersCreateUserResponse = usersCreateUserResponses[keyof usersCreateUserResponses];
+
+export type usersInviteUserData = {
+    body: UserInvite;
+    path?: never;
+    query?: never;
+    url: '/api/v1/users/invite';
+};
+
+export type usersInviteUserErrors = {
+    /**
+     * User with this email already exists
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type usersInviteUserError = usersInviteUserErrors[keyof usersInviteUserErrors];
+
+export type usersInviteUserResponses = {
+    /**
+     * Successful Response
+     */
+    201: UserPublic;
+};
+
+export type usersInviteUserResponse = usersInviteUserResponses[keyof usersInviteUserResponses];
 
 export type usersDeleteUserMeData = {
     body?: never;

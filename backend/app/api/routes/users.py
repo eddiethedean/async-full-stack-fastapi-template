@@ -1,4 +1,6 @@
+import secrets
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,19 +16,22 @@ from app.api.deps import (
 )
 from app.api.pagination import PaginationDep, fetch_page
 from app.core.config import settings
+from app.core.security import get_password_hash
+from app.core.sessions import issue_account_action
+from app.email_outbox import enqueue_email
 from app.models import (
     Item,
     Message,
     UpdatePassword,
     User,
     UserCreate,
+    UserInvite,
     UserPublic,
     UserRegister,
     UsersPublic,
     UserUpdate,
     UserUpdateMe,
 )
-from app.utils import generate_new_account_email, send_email
 
 router = APIRouter(prefix="/users", tags=["users"])
 email_conflict: dict[int | str, dict[str, Any]] = {
@@ -60,21 +65,53 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
     Create new user.
     """
-    user = await crud.create_user(session=session, user_create=user_in)
-    if settings.emails_enabled and user_in.email:
-        email_data = await run_in_threadpool(
-            generate_new_account_email,
-            email_to=user_in.email,
-            username=user_in.email,
-            password=user_in.password,
+    hashed_password = await run_in_threadpool(get_password_hash, user_in.password)
+    user = User.model_validate(user_in, update={"hashed_password": hashed_password})
+    if settings.emails_enabled:
+        enqueue_email(
+            session,
+            kind="welcome",
+            recipient=user.email,
+            deduplication_key=f"welcome:{user.id}",
         )
-        await run_in_threadpool(
-            send_email,
-            email_to=user_in.email,
-            subject=email_data.subject,
-            html_content=email_data.html_content,
-        )
-    return user
+    return await crud.commit_user(session, user)
+
+
+@router.post(
+    "/invite",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=UserPublic,
+    status_code=201,
+    responses=email_conflict,
+)
+async def invite_user(session: SessionDep, user_in: UserInvite) -> User:
+    if not settings.emails_enabled:
+        raise HTTPException(status_code=503, detail="Email delivery is unavailable")
+
+    # Pending accounts have no usable password until the recipient accepts.
+    placeholder = await run_in_threadpool(get_password_hash, secrets.token_urlsafe(32))
+    user = User.model_validate(
+        user_in,
+        update={
+            "hashed_password": placeholder,
+            "is_active": False,
+            "invitation_pending": True,
+        },
+    )
+    await crud.flush_user(session, user)
+    expires_delta = timedelta(hours=settings.EMAIL_INVITE_TOKEN_EXPIRE_HOURS)
+    token = issue_account_action(
+        session, user, purpose="invite", expires_delta=expires_delta
+    )
+    enqueue_email(
+        session,
+        kind="invite",
+        recipient=user.email,
+        deduplication_key=f"invite:{user.id}",
+        token=token,
+        expires_delta=expires_delta,
+    )
+    return await crud.commit_user(session, user)
 
 
 @router.patch("/me", response_model=UserPublic, responses=email_conflict)

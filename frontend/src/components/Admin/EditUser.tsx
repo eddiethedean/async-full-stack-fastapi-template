@@ -124,7 +124,9 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
             <DialogHeader>
               <DialogTitle>Edit User</DialogTitle>
               <DialogDescription>
-                Update the user details below.
+                {user.invitation_pending
+                  ? "Email, password, and activation can be changed after the invitation is accepted."
+                  : "Update the user details below."}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -141,6 +143,7 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
                         placeholder="Email"
                         type="email"
                         {...field}
+                        readOnly={user.invitation_pending}
                         required
                       />
                     </FormControl>
@@ -174,6 +177,7 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
                         placeholder="Password"
                         type="password"
                         {...field}
+                        disabled={user.invitation_pending}
                       />
                     </FormControl>
                     <FormMessage />
@@ -192,6 +196,7 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
                         placeholder="Password"
                         type="password"
                         {...field}
+                        disabled={user.invitation_pending}
                       />
                     </FormControl>
                     <FormMessage />
@@ -224,6 +229,7 @@ const EditUser = ({ user, onSuccess }: EditUserProps) => {
                       <Checkbox
                         checked={field.value}
                         onCheckedChange={field.onChange}
+                        disabled={user.invitation_pending}
                       />
                     </FormControl>
                     <FormLabel className="font-normal">Is active?</FormLabel>

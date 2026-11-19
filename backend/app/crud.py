@@ -1,6 +1,7 @@
 import uuid
 from typing import Literal
 
+from fastapi import HTTPException
 from psycopg.errors import UniqueViolation
 from pydantic import MISSING
 from sqlalchemy.exc import IntegrityError
@@ -17,17 +18,31 @@ class DuplicateEmailError(Exception):
     """The user's email already exists."""
 
 
+async def flush_user(session: AsyncSession, user: User) -> None:
+    session.add(user)
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        await session.rollback()
+        check_email_conflict(error)
+        raise
+
+
+def check_email_conflict(error: IntegrityError) -> None:
+    if (
+        isinstance(error.orig, UniqueViolation)
+        and error.orig.diag.constraint_name == "ix_user_email"
+    ):
+        raise DuplicateEmailError from error
+
+
 async def commit_user(session: AsyncSession, user: User) -> User:
     session.add(user)
     try:
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        if (
-            isinstance(error.orig, UniqueViolation)
-            and error.orig.diag.constraint_name == "ix_user_email"
-        ):
-            raise DuplicateEmailError from error
+        check_email_conflict(error)
         raise
     await session.refresh(user)
     return user
@@ -60,9 +75,20 @@ async def update_user(
         not user.is_active or user.auth_version != expected_auth_version
     ):
         return None
+    email_changed = user_data.get("email", user.email) != user.email
+    if user.invitation_pending and user_data.get("is_active"):
+        raise HTTPException(
+            status_code=409,
+            detail="Accept the invitation before activating this account",
+        )
+    if user.invitation_pending and (email_changed or new_hash is not None):
+        raise HTTPException(
+            status_code=409,
+            detail="Accept the invitation before changing email or password",
+        )
     credentials_changed = (
         new_hash is not None
-        or user_data.get("email", user.email) != user.email
+        or email_changed
         or (user.is_active and user_data.get("is_active") is False)
     )
     user.sqlmodel_update(user_data)

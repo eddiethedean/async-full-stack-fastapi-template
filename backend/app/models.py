@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import MISSING, EmailStr, StrictInt
-from sqlalchemy import Index, text
+from sqlalchemy import CheckConstraint, Index, false, text
 from sqlmodel import Field, Relationship, SQLModel, col
 
 
@@ -51,8 +51,17 @@ class UpdatePassword(SQLModel):
 
 # Database model, database table inferred from class name
 class User(UserBase, table=True):
+    __table_args__ = (
+        CheckConstraint(
+            "NOT invitation_pending OR NOT is_active",
+            name="ck_user_pending_invitation_inactive",
+        ),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
+    invitation_pending: bool = Field(
+        default=False, sa_column_kwargs={"server_default": false()}
+    )
     auth_version: int = Field(default=0, sa_column_kwargs={"server_default": text("0")})
     created_at: datetime | None = Field(default_factory=get_datetime_utc)
     items: list[Item] = Relationship(back_populates="owner", cascade_delete=True)
@@ -81,7 +90,18 @@ class AccountActionToken(SQLModel, table=True):
 
 
 # Properties to return via API, id is always required
+class UserInvite(SQLModel):
+    email: EmailStr = Field(max_length=255)
+    full_name: str | None = Field(default=None, max_length=255)
+    is_superuser: bool = False
+
+
+class RecoveryRequest(SQLModel):
+    email: EmailStr
+
+
 class UserPublic(UserBase):
+    invitation_pending: bool = False
     id: uuid.UUID
     created_at: datetime | None = None
 

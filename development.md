@@ -182,9 +182,24 @@ You can also run `prek` manually on all files from the project root:
 ```bash
 uv run prek run --all-files
 ```
+
 ## Protected API responses
 
 Protected routes return `401 Unauthorized` for missing or invalid credentials.
 Bearer clients receive a `WWW-Authenticate: Bearer` header and can sign in
 again. A `403 Forbidden` response means the current account lacks the
 required permissions.
+
+## Account emails
+
+Start the `email-worker` service along with the backend and Mailpit for invitations
+and password recovery. For host development, start Mailpit through Compose and
+run `uv run python -m app.email_worker` from `backend` in another terminal. Set
+`FASTAPI_ENV=development` for this local setup. The worker waits for committed
+messages, sends them outside the database transaction, and retries temporary
+SMTP failures with bounded backoff.
+
+Use **Send invitation link** in the admin add-user dialog to let the recipient
+choose their own password. For an expired pending invitation, delete the pending
+account and send a fresh invitation. When mail is disabled, direct account
+provisioning still works and invitations return an unavailable response.

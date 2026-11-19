@@ -28,6 +28,21 @@ services:
       SMTP_USER: ""
       SMTP_PASSWORD: ""
 
+  email-worker:
+    image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
+      FASTAPI_ENV: development
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+      SMTP_SSL: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+    depends_on:
+      mailpit:
+        condition: service_started
+
   mailpit:
     image: axllent/mailpit
     ports:
@@ -42,6 +57,8 @@ services:
       backend:
         condition: service_healthy
       mailpit:
+        condition: service_started
+      email-worker:
         condition: service_started
     environment:
       FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { firstSuperuser, firstSuperuserPassword } from "./config.ts"
+import { waitForEmailHtml } from "./utils/mailpit"
 import { createUser } from "./utils/privateApi"
 import { randomEmail, randomPassword } from "./utils/random"
 import { logInUser } from "./utils/user"
@@ -235,4 +236,41 @@ test.describe("Admin page access control", () => {
 
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible()
   })
+})
+
+test("Invite a user to set their password", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const email = randomEmail()
+  const password = randomPassword()
+  await page.goto("/admin")
+  await page.getByRole("button", { name: "Add User" }).click()
+  await page.getByPlaceholder("Email").fill(email)
+  await page.getByLabel("Send invitation link").check()
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText("Invitation queued")).toBeVisible()
+
+  const html = await waitForEmailHtml({ request, query: `to:${email}` })
+  const link = html.match(
+    /\/reset-password\?invite=true(?:&amp;|&)token=[A-Za-z0-9_-]+/,
+  )?.[0]
+  if (!link) throw new Error("Invitation link missing")
+  const invited = await browser.newPage({
+    storageState: { cookies: [], origins: [] },
+  })
+  try {
+    await invited.goto(new URL(link.replace("&amp;", "&"), page.url()).href)
+    await expect(
+      invited.getByRole("heading", { name: "Set Up Account" }),
+    ).toBeVisible()
+    await invited.getByTestId("new-password-input").fill(password)
+    await invited.getByTestId("confirm-password-input").fill(password)
+    await invited.getByRole("button", { name: "Set Password" }).click()
+    await expect(invited.getByText("Your account is ready")).toBeVisible()
+    await logInUser(invited, email, password)
+  } finally {
+    await invited.close()
+  }
 })
