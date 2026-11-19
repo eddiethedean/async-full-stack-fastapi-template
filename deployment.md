@@ -60,6 +60,22 @@ field. For email addresses, coordinate any change with the account owner and
 keep addresses unique. Apply the reviewed changes before retrying the migration.
 Check that the query returns no rows, then run `alembic upgrade head`.
 
+### Item ownership on UUID downgrade
+
+Downgrading across revision `d98dd8ec85a3` restores the integer schema, which
+requires every item to have an owner. If an item has no owner, the downgrade
+reports its UUID and stops before changing the schema or data.
+
+Use this query on the UUID schema to find all affected items.
+
+```sql
+SELECT id FROM item WHERE owner_id IS NULL ORDER BY id;
+```
+
+Keep a restorable backup of the affected rows. On a restored copy, rehearse
+setting each item's `owner_id` to the UUID of its verified owner. After applying
+the reviewed changes, retry the downgrade once the query returns no rows.
+
 ## Create the FastAPI Cloud Application
 
 Create an application in FastAPI Cloud and set its [Application Directory](https://fastapicloud.com/docs/builds-and-deployments/application-directory/) to `backend`.
