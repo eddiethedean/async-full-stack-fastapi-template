@@ -1,10 +1,11 @@
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
-from sqlmodel import select
+from sqlmodel import col, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
@@ -535,6 +536,103 @@ async def test_update_user_email_exists(
     )
     assert r.status_code == 409
     assert r.json()["detail"] == "User with this email already exists"
+
+
+@pytest.fixture
+async def sole_active_superuser(db: AsyncSession) -> AsyncIterator[User]:
+    user = await crud.get_user_by_email(session=db, email=settings.FIRST_SUPERUSER)
+    assert user is not None and user.is_active and user.is_superuser
+    other_ids = (
+        (
+            await db.exec(
+                update(User)
+                .where(
+                    col(User.id) != user.id,
+                    col(User.is_superuser).is_(True),
+                    col(User.is_active).is_(True),
+                )
+                .values(is_superuser=False)
+                .returning(col(User.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await db.commit()
+    try:
+        yield user
+    finally:
+        await db.refresh(user)
+        user.is_superuser = True
+        user.is_active = True
+        if other_ids:
+            await db.exec(
+                update(User)
+                .where(col(User.id).in_(other_ids))
+                .values(is_superuser=True)
+            )
+        await db.commit()
+
+
+@pytest.mark.parametrize("field", ["is_superuser", "is_active"])
+async def test_cannot_remove_last_active_superuser(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    sole_active_superuser: User,
+    field: str,
+) -> None:
+    url = f"{settings.API_V1_STR}/users/{sole_active_superuser.id}"
+    response = await client.patch(
+        url, headers=superuser_token_headers, json={field: False}
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Cannot remove the last active superuser"}
+    listing = await client.get(
+        f"{settings.API_V1_STR}/users/", headers=superuser_token_headers
+    )
+    assert listing.status_code == 200
+
+
+async def test_concurrent_superuser_removals_preserve_one_admin(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    sole_active_superuser: User,
+    db: AsyncSession,
+) -> None:
+    email, password = random_email(), random_lower_string()
+    second = await crud.create_user(
+        session=db,
+        user_create=UserCreate(email=email, password=password, is_superuser=True),
+    )
+    second_headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
+    try:
+        responses = await asyncio.gather(
+            client.patch(
+                f"{settings.API_V1_STR}/users/{sole_active_superuser.id}",
+                headers=superuser_token_headers,
+                json={"is_superuser": False},
+            ),
+            client.patch(
+                f"{settings.API_V1_STR}/users/{second.id}",
+                headers=second_headers,
+                json={"is_active": False},
+            ),
+        )
+        assert sorted(response.status_code for response in responses) == [200, 409]
+        active_ids = (
+            await db.exec(
+                select(User.id).where(
+                    col(User.is_active).is_(True), col(User.is_superuser).is_(True)
+                )
+            )
+        ).all()
+        assert len(active_ids) == 1
+    finally:
+        await db.delete(second)
+        await db.commit()
 
 
 async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:

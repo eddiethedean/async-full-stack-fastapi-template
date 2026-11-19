@@ -869,6 +869,10 @@ export type usersDeleteUserData = {
 
 export type usersDeleteUserErrors = {
     /**
+     * Removal of the last active superuser
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
@@ -929,7 +933,7 @@ export type usersUpdateUserData = {
 
 export type usersUpdateUserErrors = {
     /**
-     * User with this email already exists
+     * Email conflict or removal of the last active superuser
      */
     409: unknown;
     /**

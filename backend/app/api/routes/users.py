@@ -18,7 +18,7 @@ from app.api.pagination import PaginationDep, fetch_page
 from app.core.config import settings
 from app.core.rate_limits import enforce_rate_limit
 from app.core.security import get_password_hash
-from app.core.sessions import issue_account_action
+from app.core.sessions import issue_account_action, lock_user
 from app.email_outbox import enqueue_email
 from app.models import (
     Item,
@@ -169,11 +169,14 @@ async def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
     """
     Delete own user.
     """
-    if current_user.is_superuser:
+    user = await lock_user(session, current_user.id)
+    if user is None:
+        raise get_credentials_error()
+    if user.is_superuser:
         raise HTTPException(
             status_code=403, detail="Super users are not allowed to delete themselves"
         )
-    await session.delete(current_user)
+    await session.delete(user)
     await session.commit()
     return Message(message="User deleted successfully")
 
@@ -214,7 +217,9 @@ async def read_user_by_id(
     "/{user_id}",
     dependencies=[Depends(get_current_active_superuser)],
     response_model=UserPublic,
-    responses=email_conflict,
+    responses={
+        409: {"description": "Email conflict or removal of the last active superuser"}
+    },
 )
 async def update_user(
     *,
@@ -238,20 +243,26 @@ async def update_user(
     return db_user
 
 
-@router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])
+@router.delete(
+    "/{user_id}",
+    dependencies=[Depends(get_current_active_superuser)],
+    responses={409: {"description": "Removal of the last active superuser"}},
+)
 async def delete_user(
     session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID
 ) -> Message:
     """
     Delete a user.
     """
-    user = await session.get(User, user_id)
+    await crud.lock_active_superuser_removal(session)
+    user = await lock_user(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user == current_user:
         raise HTTPException(
             status_code=403, detail="Super users are not allowed to delete themselves"
         )
+    await crud.require_other_active_superuser(session, user)
     statement = delete(Item).where(col(Item.owner_id) == user_id)
     await session.exec(statement)
     await session.delete(user)

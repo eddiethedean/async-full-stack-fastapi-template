@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from psycopg.errors import UniqueViolation
 from pydantic import MISSING
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -60,6 +60,31 @@ async def create_user(*, session: AsyncSession, user_create: UserCreate) -> User
     return await commit_user(session, db_obj)
 
 
+async def lock_active_superuser_removal(session: AsyncSession) -> None:
+    # Serialize removals before locking individual user rows.
+    await session.exec(select(func.pg_advisory_xact_lock(243380411)))
+
+
+async def require_other_active_superuser(session: AsyncSession, user: User) -> None:
+    if not (user.is_active and user.is_superuser):
+        return
+    other = (
+        await session.exec(
+            select(User.id)
+            .where(
+                col(User.is_active).is_(True),
+                col(User.is_superuser).is_(True),
+                col(User.id) != user.id,
+            )
+            .limit(1)
+        )
+    ).first()
+    if other is None:
+        raise HTTPException(
+            status_code=409, detail="Cannot remove the last active superuser"
+        )
+
+
 async def update_user(
     *,
     session: AsyncSession,
@@ -71,6 +96,11 @@ async def update_user(
     new_hash = None
     if isinstance(user_in, UserUpdate) and user_in.password is not MISSING:
         new_hash = await run_in_threadpool(get_password_hash, user_in.password)
+    may_remove_superuser = (
+        user_data.get("is_superuser") is False or user_data.get("is_active") is False
+    )
+    if may_remove_superuser:
+        await lock_active_superuser_removal(session)
     user = await lock_user(session, db_user.id)
     if user is None:
         return None
@@ -90,6 +120,8 @@ async def update_user(
             status_code=409,
             detail="Accept the invitation before changing email or password",
         )
+    if may_remove_superuser:
+        await require_other_active_superuser(session, user)
     credentials_changed = (
         new_hash is not None
         or email_changed
