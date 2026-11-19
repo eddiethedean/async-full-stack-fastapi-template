@@ -43,7 +43,11 @@ def upgrade() -> None:
     )
     op.create_foreign_key(
         "fk_email_outbox_user_id_user",
-        "email_outbox", "user", ["user_id"], ["id"], ondelete="SET NULL",
+        "email_outbox",
+        "user",
+        ["user_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
     op.create_index("ix_email_outbox_user_id", "email_outbox", ["user_id"])
     op.execute(
@@ -55,7 +59,21 @@ def upgrade() -> None:
             SET failed_at = now(), last_error = 'account_deleted',
                 payload = NULL, key_version = NULL,
                 lease_id = NULL, lease_expires_at = NULL
-            WHERE user_id = OLD.id AND delivered_at IS NULL AND failed_at IS NULL;
+            WHERE delivered_at IS NULL AND failed_at IS NULL
+              AND (
+                user_id = OLD.id OR (
+                  -- Older API replicas can still enqueue without user_id.
+                  user_id IS NULL AND (
+                    (kind IN ('welcome', 'invite')
+                     AND deduplication_key = kind || ':' || OLD.id::text)
+                    OR (kind = 'password_reset' AND deduplication_key IN (
+                      SELECT 'reset:' || action.digest
+                      FROM accountactiontoken AS action
+                      WHERE action.user_id = OLD.id AND action.purpose = 'password_reset'
+                    ))
+                  )
+                )
+              );
             RETURN OLD;
         END;
         $$

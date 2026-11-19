@@ -22,10 +22,12 @@ from app.email_outbox import (
     claim_email,
     complete_email,
     get_cipher,
+    has_current_email_lease,
     queue_stats,
     renew_email_lease,
 )
 from app.utils import (
+    EmailData,
     generate_invitation_email,
     generate_new_account_email,
     generate_reset_password_email,
@@ -54,28 +56,20 @@ def record_heartbeat() -> None:
         logger.warning("email_outbox heartbeat_unavailable")
 
 
-def deliver_email(claimed: ClaimedEmail) -> None:
+def render_email(claimed: ClaimedEmail) -> EmailData:
     token = None
     if claimed.payload is not None and claimed.key_version is not None:
         token = get_cipher(claimed.key_version).decrypt(claimed.payload).decode()
 
     if claimed.kind == "password_reset" and token is not None:
-        email = generate_reset_password_email(
+        return generate_reset_password_email(
             claimed.recipient, claimed.recipient, token
         )
-    elif claimed.kind == "invite" and token is not None:
-        email = generate_invitation_email(claimed.recipient, token)
-    elif claimed.kind == "welcome":
-        email = generate_new_account_email(claimed.recipient)
-    else:
-        raise ValueError("Missing email payload")
-
-    send_email(
-        email_to=claimed.recipient,
-        subject=email.subject,
-        html_content=email.html_content,
-        message_id=f"{claimed.id}@email-outbox",
-    )
+    if claimed.kind == "invite" and token is not None:
+        return generate_invitation_email(claimed.recipient, token)
+    if claimed.kind == "welcome":
+        return generate_new_account_email(claimed.recipient)
+    raise ValueError("Missing email payload")
 
 
 async def keep_email_lease(
@@ -107,7 +101,18 @@ async def deliver_with_lease(
     finished = asyncio.Event()
     renewal = asyncio.create_task(keep_email_lease(claimed, finished, on_progress))
     try:
-        await run_in_threadpool(deliver_email, claimed)
+        email = await run_in_threadpool(render_email, claimed)
+        # Account deletion can revoke the lease between claiming and sending.
+        async with create_session() as session:
+            if not await has_current_email_lease(session, claimed):
+                return
+        await run_in_threadpool(
+            send_email,
+            email_to=claimed.recipient,
+            subject=email.subject,
+            html_content=email.html_content,
+            message_id=f"{claimed.id}@email-outbox",
+        )
     finally:
         finished.set()
         await renewal

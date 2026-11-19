@@ -171,6 +171,19 @@ def clear_payload(row: EmailOutbox) -> None:
     row.key_version = None
 
 
+async def has_current_email_lease(session: AsyncSession, claimed: ClaimedEmail) -> bool:
+    statement = (
+        select(EmailOutbox.id)
+        .where(
+            col(EmailOutbox.id) == claimed.id,
+            col(EmailOutbox.lease_id) == claimed.lease_id,
+            col(EmailOutbox.lease_expires_at) > func.clock_timestamp(),
+        )
+        .with_for_update()
+    )
+    return (await session.exec(statement)).one_or_none() is not None
+
+
 async def renew_email_lease(session: AsyncSession, claimed: ClaimedEmail) -> bool:
     now = func.clock_timestamp()
     result = await session.exec(

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from logging import INFO, LogRecord
 from smtplib import SMTPConnectError, SMTPRecipientsRefused
@@ -8,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
-from sqlmodel import col, delete, select
+from sqlmodel import col, delete, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.access_logs import SensitivePathFilter
@@ -26,7 +27,7 @@ from app.email_outbox import (
     get_cipher,
     renew_email_lease,
 )
-from app.email_worker import process_next_email
+from app.email_worker import deliver_with_lease, process_next_email
 from app.models import User
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -59,12 +60,23 @@ async def test_rollback_discards_pending_email() -> None:
         assert row is None
 
 
-@pytest.mark.parametrize("deleted_by_admin", [False, True])
+@pytest.mark.parametrize(
+    ("deleted_by_admin", "legacy_writer", "claimed_before_deletion"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
+        (False, False, True),
+    ],
+    ids=["self-delete", "admin-delete", "old-api", "claimed-before-delete"],
+)
 async def test_account_deletion_cancels_queued_email(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
     deleted_by_admin: bool,
+    legacy_writer: bool,
+    claimed_before_deletion: bool,
 ) -> None:
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
@@ -79,12 +91,18 @@ async def test_account_deletion_cancels_queued_email(
     user_id = created.json()["id"]
     recovery = await client.post(f"{prefix}/password-recovery", json={"email": email})
     assert recovery.status_code == 200
-    async with create_session() as session:
+    async with create_session() as session, session.begin():
         pending = (await session.exec(select(EmailOutbox))).all()
         assert {job.kind for job in pending} == {"welcome", "password_reset"}
         assert all(
             str(job.user_id) == user_id and job.failed_at is None for job in pending
         )
+        if legacy_writer:
+            await session.exec(
+                update(EmailOutbox)
+                .where(col(EmailOutbox.recipient) == email)
+                .values(user_id=None)
+            )
 
     if deleted_by_admin:
         path, headers = user_id, superuser_token_headers
@@ -93,12 +111,27 @@ async def test_account_deletion_cancels_queued_email(
         headers = await user_authentication_headers(
             client=client, email=email, password=password
         )
-    deleted = await client.delete(f"{prefix}/users/{path}", headers=headers)
-    assert deleted.status_code == 200
 
-    with patch("app.email_worker.deliver_email") as deliver:
+    async def delete_account() -> None:
+        deleted = await client.delete(f"{prefix}/users/{path}", headers=headers)
+        assert deleted.status_code == 200
+
+    async def delete_before_send(
+        claimed: ClaimedEmail, on_progress: Callable[[], None] | None
+    ) -> None:
+        await delete_account()
+        await deliver_with_lease(claimed, on_progress)
+
+    with patch("app.email_worker.send_email") as send:
+        if claimed_before_deletion:
+            monkeypatch.setattr(
+                "app.email_worker.deliver_with_lease", delete_before_send
+            )
+            assert await process_next_email()
+        else:
+            await delete_account()
         assert not await process_next_email()
-        deliver.assert_not_called()
+        send.assert_not_called()
     async with create_session() as session:
         assert (
             await session.exec(select(User).where(col(User.email) == email))

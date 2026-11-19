@@ -140,8 +140,8 @@ Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
 
 Deleting an account cancels its queued email, clears queued credentials, and
-prevents further retries. The worker may finish an email it already claimed
-for delivery.
+prevents further retries. The worker checks that it still holds the lease
+before handing the message off for SMTP delivery.
 
 ## Authentication rate limits
 
