@@ -49,26 +49,23 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
   const queryClient = useQueryClient()
   const { generation } = useSession()
   const { showSuccessToast, showErrorToast } = useCustomToast()
+  const defaultValues = {
+    title: item.title,
+    description: item.description ?? "",
+  }
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     mode: "onBlur",
     criteriaMode: "all",
-    defaultValues: {
-      title: item.title,
-      description: item.description ?? "",
-    },
+    defaultValues,
   })
   const { dirtyFields } = form.formState
 
   const mutation = usePrivateMutation({
     mutationFn: (data: ItemUpdate) =>
       ItemsService.updateItem({ path: { id: item.id }, body: data }),
-    onSuccess: ({ data: updated }) => {
-      form.reset({
-        title: updated.title,
-        description: updated.description ?? "",
-      })
+    onSuccess: () => {
       showSuccessToast("Item updated successfully")
       setIsOpen(false)
       onSuccess()
@@ -92,7 +89,10 @@ const EditItem = ({ item, onSuccess }: EditItemProps) => {
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          form.reset(defaultValues)
+          setIsOpen(true)
+        }}
       >
         <Pencil />
         Edit Item

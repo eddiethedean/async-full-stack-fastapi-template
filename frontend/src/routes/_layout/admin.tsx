@@ -1,14 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, redirect } from "@tanstack/react-router"
 
-import { type UserPublic, UsersService } from "@/client"
+import { UsersService } from "@/client"
 import AddUser from "@/components/Admin/AddUser"
 import { columns, type UserTableData } from "@/components/Admin/columns"
 import { DataTable } from "@/components/Common/DataTable"
+import ErrorComponent from "@/components/Common/ErrorComponent"
 import PendingUsers from "@/components/Pending/PendingUsers"
 import useAuth from "@/hooks/useAuth"
 import { privateQueryKey, useSession } from "@/lib/auth"
 import { paginationSearch } from "@/lib/pagination"
+import { isForbiddenError } from "@/utils"
 
 export const Route = createFileRoute("/_layout/admin")({
   component: Admin,
@@ -29,7 +31,7 @@ export const Route = createFileRoute("/_layout/admin")({
   }),
 })
 
-function UsersTable() {
+function Admin() {
   const { user: currentUser } = useAuth()
   const { generation } = useSession()
   const { page, pageSize } = Route.useSearch()
@@ -37,8 +39,8 @@ function UsersTable() {
   const {
     data: users,
     error,
-    isPlaceholderData,
     isFetching,
+    isPlaceholderData,
   } = useQuery({
     queryFn: async ({ signal }) =>
       (
@@ -50,37 +52,20 @@ function UsersTable() {
     queryKey: [...privateQueryKey(generation, "users"), page, pageSize],
     placeholderData: (previous, query) =>
       query?.queryKey[1] === generation ? previous : undefined,
+    retry: (failureCount, error) =>
+      !isForbiddenError(error) && failureCount < 3,
   })
 
+  if (isForbiddenError(error)) return <ErrorComponent error={error} />
   if (!users && error) throw error
-  if (!users) return <PendingUsers />
 
-  const tableData: UserTableData[] = (isPlaceholderData ? [] : users.data).map(
-    (user: UserPublic) => ({
-      ...user,
-      isCurrentUser: currentUser?.id === user.id,
-    }),
-  )
+  const tableData: UserTableData[] = (
+    isPlaceholderData ? [] : (users?.data ?? [])
+  ).map((user) => ({
+    ...user,
+    isCurrentUser: currentUser?.id === user.id,
+  }))
 
-  return (
-    <DataTable
-      columns={columns}
-      data={tableData}
-      rowCount={users.count}
-      pagination={{ pageIndex: page - 1, pageSize }}
-      onPaginationChange={(next, replace) => {
-        void navigate({
-          search: { page: next.pageIndex + 1, pageSize: next.pageSize },
-          replace,
-        })
-      }}
-      loading={isPlaceholderData}
-      refreshing={isFetching || isPlaceholderData}
-    />
-  )
-}
-
-function Admin() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -92,7 +77,24 @@ function Admin() {
         </div>
         <AddUser />
       </div>
-      <UsersTable />
+      {users ? (
+        <DataTable
+          columns={columns}
+          data={tableData}
+          rowCount={users.count}
+          pagination={{ pageIndex: page - 1, pageSize }}
+          onPaginationChange={(next, replace) => {
+            void navigate({
+              search: { page: next.pageIndex + 1, pageSize: next.pageSize },
+              replace,
+            })
+          }}
+          loading={isPlaceholderData}
+          refreshing={isFetching || isPlaceholderData}
+        />
+      ) : (
+        <PendingUsers />
+      )}
     </div>
   )
 }

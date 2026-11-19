@@ -2,11 +2,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import col, func, select
+from sqlmodel import col
 
 from app import crud
 from app.api.deps import CurrentUser, SessionDep
-from app.api.pagination import PaginationDep
+from app.api.pagination import PaginationDep, fetch_page
 from app.models import Item, ItemCreate, ItemPublic, ItemsPublic, ItemUpdate, Message
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -20,19 +20,10 @@ async def read_items(
     Retrieve items.
     """
 
-    filtered = select(Item)
-    if not current_user.is_superuser:
-        filtered = filtered.where(Item.owner_id == current_user.id)
-
-    count = (
-        await session.exec(select(func.count()).select_from(filtered.subquery()))
-    ).one()
-    statement = (
-        filtered.order_by(col(Item.created_at).desc().nulls_last(), col(Item.id).desc())
-        .offset(pagination.skip)
-        .limit(pagination.limit)
+    filters = (
+        () if current_user.is_superuser else (col(Item.owner_id) == current_user.id,)
     )
-    items = (await session.exec(statement)).all()
+    items, count = await fetch_page(session, Item, pagination, *filters)
     items_public = [ItemPublic.model_validate(item) for item in items]
     return ItemsPublic(data=items_public, count=count)
 

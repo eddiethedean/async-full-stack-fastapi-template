@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import col, delete, func, select
+from sqlmodel import col, delete
 from starlette.concurrency import run_in_threadpool
 
 from app import crud
@@ -12,7 +12,7 @@ from app.api.deps import (
     get_credentials_error,
     get_current_active_superuser,
 )
-from app.api.pagination import PaginationDep
+from app.api.pagination import PaginationDep, fetch_page
 from app.core.config import settings
 from app.models import (
     Item,
@@ -44,16 +44,7 @@ async def read_users(session: SessionDep, pagination: PaginationDep) -> UsersPub
     Retrieve users.
     """
 
-    count_statement = select(func.count()).select_from(User)
-    count = (await session.exec(count_statement)).one()
-
-    statement = (
-        select(User)
-        .order_by(col(User.created_at).desc().nulls_last(), col(User.id).desc())
-        .offset(pagination.skip)
-        .limit(pagination.limit)
-    )
-    users = (await session.exec(statement)).all()
+    users, count = await fetch_page(session, User, pagination)
 
     users_public = [UserPublic.model_validate(user) for user in users]
     return UsersPublic(data=users_public, count=count)

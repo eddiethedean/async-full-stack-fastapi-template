@@ -1,4 +1,7 @@
-import { AxiosError } from "axios"
+import { AxiosError, isAxiosError } from "axios"
+
+export const isForbiddenError = (error: unknown) =>
+  isAxiosError(error) && error.response?.status === 403
 
 function extractErrorMessage(err: Error): string {
   if (err instanceof AxiosError) {

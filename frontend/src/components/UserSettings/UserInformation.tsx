@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils"
 import { handleError } from "@/utils"
 
 const formSchema = z.object({
-  full_name: z.string().max(30).optional(),
+  full_name: z.string().max(255).optional(),
   email: z.email({ message: "Invalid email address" }),
 })
 
