@@ -226,6 +226,45 @@ async def test_update_item_not_found(
     assert content["detail"] == "Item not found"
 
 
+async def test_update_item_deleted_after_read(
+    client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email, password = random_email(), random_lower_string()
+    user = await create_user(
+        session=db, user_create=UserCreate(email=email, password=password)
+    )
+    item = Item(title="Original title", owner_id=user.id)
+    db.add(item)
+    await db.commit()
+    headers = await user_authentication_headers(
+        client=client, email=email, password=password
+    )
+    get = AsyncSession.get
+
+    async def delete_after_read(
+        session: AsyncSession, entity: type[Any], ident: Any, **kwargs: Any
+    ) -> Any:
+        row = await get(session, entity, ident, **kwargs)
+        if entity is Item and ident == item.id and row is not None:
+            async with create_session() as writer, writer.begin():
+                target = await get(writer, Item, item.id)
+                assert target is not None
+                await writer.delete(target)
+        return row
+
+    monkeypatch.setattr(AsyncSession, "get", delete_after_read)
+    response = await client.put(
+        f"{settings.API_V1_STR}/items/{item.id}",
+        headers=headers,
+        json={"title": "Updated title"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Item not found"}
+    async with create_session() as reader:
+        assert await get(reader, Item, item.id) is None
+
+
 async def test_update_item_distinguishes_omission_from_null(
     client: AsyncClient, superuser_token_headers: dict[str, str]
 ) -> None:

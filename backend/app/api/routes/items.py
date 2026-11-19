@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import col
+from sqlmodel import col, update
 
 from app import crud
 from app.api.deps import CurrentUser, SessionDep
@@ -72,11 +72,18 @@ async def update_item(
     if not current_user.is_superuser and (item.owner_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     update_dict = item_in.model_dump(exclude_unset=True)
-    item.sqlmodel_update(update_dict)
-    session.add(item)
+    if not update_dict:
+        return item
+
+    statement = update(Item).where(col(Item.id) == id)
+    if not current_user.is_superuser:
+        statement = statement.where(col(Item.owner_id) == current_user.id)
+    result = await session.exec(statement.values(update_dict).returning(Item))
+    updated = result.scalar_one_or_none()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Item not found")
     await session.commit()
-    await session.refresh(item)
-    return item
+    return updated
 
 
 @router.delete("/{id}")
