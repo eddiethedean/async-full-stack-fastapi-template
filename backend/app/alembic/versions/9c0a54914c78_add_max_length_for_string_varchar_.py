@@ -45,10 +45,13 @@ def upgrade():
             LIMIT 1;
 
             IF FOUND THEN
-                RAISE EXCEPTION
-                    'Revision 9c0a54914c78 cannot narrow %.% for row ID % with % characters (limit 255).',
-                    oversized.table_name, oversized.column_name, oversized.id, oversized.characters
-                    USING HINT = 'Preserve the original data and review oversized values before retrying. See deployment.md under Historical text migration.';
+                -- Offline SQL generation escapes percent-format placeholders.
+                RAISE EXCEPTION USING
+                    MESSAGE = 'Revision 9c0a54914c78 cannot narrow '
+                        || oversized.table_name || '.' || oversized.column_name
+                        || ' for row ID ' || oversized.id || ' with '
+                        || oversized.characters || ' characters (limit 255).',
+                    HINT = 'Preserve the original data and review oversized values before retrying. See deployment.md under Historical text migration.';
             END IF;
         END
         $$;

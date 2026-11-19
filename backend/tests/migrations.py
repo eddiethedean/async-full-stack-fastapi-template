@@ -113,8 +113,20 @@ def verify_varchar_preflight(
         assert conn.execute(full_name, {"id": oversized}).scalar_one() == exceeds_limit
         conn.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": oversized})
 
-    migrate("upgrade", varchar_revision)
+    offline_upgrade = subprocess.run(
+        ["alembic", "upgrade", "--sql", f"{initial_revision}:{varchar_revision}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     with engine.connect() as conn:
+        # The generated script contains its own BEGIN and COMMIT.
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.exec_driver_sql(offline_upgrade, execution_options={"no_parameters": True})
+        assert (
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == varchar_revision
+        )
         assert conn.execute(full_name, {"id": owner}).scalar_one() == fits
         assert conn.execute(text("SELECT title, description FROM item")).one() == (
             fits,
