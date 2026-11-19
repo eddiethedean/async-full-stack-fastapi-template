@@ -1,4 +1,4 @@
-"""Check an upgrade from the last release with data in the old schema."""
+"""Check migrations with data in historical schemas."""
 
 import asyncio
 import os
@@ -7,6 +7,7 @@ from uuid import UUID
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlmodel import select
 
 from tests.database import test_database_url
@@ -128,5 +129,71 @@ def verify_populated_upgrade() -> None:
     asyncio.run(verify_upgraded_application())
 
 
+def verify_uuid_downgrade() -> None:
+    database_url = test_database_url()
+    integer_revision = "9c0a54914c78"
+    uuid_revision = "d98dd8ec85a3"
+
+    def migrate(direction: str, revision: str) -> None:
+        subprocess.run(
+            ["alembic", direction, revision],
+            env={
+                **os.environ,
+                "DATABASE_URL": database_url,
+                "FASTAPI_ENV": "development",
+            },
+            check=True,
+        )
+
+    columns = text(
+        "SELECT table_name, column_name, data_type, column_default, is_nullable "
+        "FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND (table_name, column_name) IN "
+        "(('user', 'id'), ('item', 'id'), ('item', 'owner_id')) "
+        "ORDER BY table_name, column_name"
+    )
+    insert_user = text(
+        'INSERT INTO "user" (email, hashed_password, is_active, is_superuser) '
+        "VALUES (:email, 'fixture', true, false) RETURNING id"
+    )
+    insert_item = text(
+        "INSERT INTO item (title, owner_id) VALUES (:title, :owner) RETURNING id"
+    )
+    email = "before-uuid@example.com"
+    engine = create_engine(make_url(database_url).set(drivername="postgresql+psycopg"))
+    try:
+        migrate("upgrade", integer_revision)
+        with engine.begin() as conn:
+            original_columns = conn.execute(columns).all()
+            assert len(original_columns) == 3
+            owner = conn.execute(insert_user, {"email": email}).scalar_one()
+            conn.execute(insert_item, {"title": "Before UUIDs", "owner": owner})
+
+        migrate("upgrade", uuid_revision)
+        migrate("downgrade", integer_revision)
+        with engine.begin() as conn:
+            assert conn.execute(columns).all() == original_columns
+            original_owner, original_item, item_owner = conn.execute(
+                text(
+                    'SELECT "user".id, item.id, item.owner_id FROM "user", item '
+                    "WHERE email = :email AND title = 'Before UUIDs'"
+                ),
+                {"email": email},
+            ).one()
+            assert original_owner == item_owner
+            new_owner = conn.execute(
+                insert_user, {"email": "after-rollback@example.com"}
+            ).scalar_one()
+            new_item = conn.execute(
+                insert_item, {"title": "After rollback", "owner": new_owner}
+            ).scalar_one()
+            assert new_owner > original_owner
+            assert new_item > original_item
+        migrate("downgrade", "base")
+    finally:
+        engine.dispose()
+
+
 if __name__ == "__main__":
+    verify_uuid_downgrade()
     verify_populated_upgrade()

@@ -74,13 +74,19 @@ def downgrade():
     # Drop new columns and rename old columns back
     op.drop_constraint('item_owner_id_fkey', 'item', type_='foreignkey')
     op.drop_column('item', 'owner_id')
-    op.alter_column('item', 'old_owner_id', new_column_name='owner_id')
+    op.alter_column('item', 'old_owner_id', new_column_name='owner_id', nullable=False)
 
     op.drop_column('user', 'id')
-    op.alter_column('user', 'old_id', new_column_name='id')
+    op.alter_column(
+        'user', 'old_id', new_column_name='id',
+        server_default=sa.text("nextval('user_id_seq'::regclass)"),
+    )
 
     op.drop_column('item', 'id')
-    op.alter_column('item', 'old_id', new_column_name='id')
+    op.alter_column(
+        'item', 'old_id', new_column_name='id',
+        server_default=sa.text("nextval('item_id_seq'::regclass)"),
+    )
 
     # Create primary key constraint
     op.create_primary_key('user_pkey', 'user', ['id'])
