@@ -80,6 +80,11 @@ the shared `compose.yml` configuration. The production commands use the
 exported settings and skip the tracked development `.env` file. To load
 settings from a deployment environment file, pass its path to `--env-file`.
 
+When upgrading an existing deployment, use its current Compose project name so
+Compose reuses the database and certificate volumes. If the name came from
+`.env`, export the same `COMPOSE_PROJECT_NAME` before running the production
+commands with `--env-file /dev/null`.
+
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
 The deployment puts Traefik and the API on a dedicated ingress network. Uvicorn
@@ -98,6 +103,10 @@ Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after confi
 The workflow gives each build a unique image tag and scans the image on the
 deployment host before migrations. The API and worker start from that same
 local image.
+
+The workflow keeps Compose's existing project name resolution, including a
+`COMPOSE_PROJECT_NAME` in `.env`. The workflow's SMTP settings take precedence
+over `.env`, with production transport defaults for unset settings.
 
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 

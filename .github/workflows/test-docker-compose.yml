@@ -59,6 +59,39 @@ jobs:
               assert env["SMTP_TLS"] == "true"
               assert env["SMTP_SSL"] == "false"
           '
+      - name: Verify production workflow settings preserve the existing project
+        run: |
+          project_dir=$(mktemp -d)
+          trap 'rm -rf "$project_dir"' EXIT
+          cp .env compose.yml compose.deploy.yml "$project_dir/"
+          printf '\nCOMPOSE_PROJECT_NAME=asf-existing-stack\n' >> "$project_dir/.env"
+          (
+            cd "$project_dir"
+            unset COMPOSE_PROJECT_NAME
+            export DOMAIN=smoke.example.com PROJECT_NAME="Compose smoke test" FIRST_SUPERUSER=admin@example.com
+            export SMTP_HOST="" SMTP_PORT="" SMTP_TLS="" SMTP_SSL="" SMTP_TIMEOUT_SECONDS=""
+            export SMTP_USER="" SMTP_PASSWORD="" EMAILS_FROM_EMAIL="" EMAIL_OUTBOX_KEYS="" EMAIL_OUTBOX_KEY_VERSION=""
+            python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          command = ["docker", "compose", "-f", "compose.yml", "-f", "compose.deploy.yml", "config", "--format", "json"]
+          for host, sender in (("", ""), ("smtp.example.com", "sender@example.com")):
+              env = {**os.environ, "SMTP_HOST": host, "EMAILS_FROM_EMAIL": sender}
+              config = json.loads(subprocess.check_output(command, env=env))
+              assert config["name"] == "asf-existing-stack"
+              assert config["volumes"]["app-db-data"]["name"] == "asf-existing-stack_app-db-data"
+              for name in ("backend", "email-worker"):
+                  settings = config["services"][name]["environment"]
+                  assert settings["SMTP_HOST"] == host
+                  assert settings["EMAILS_FROM_EMAIL"] == sender
+                  assert settings["SMTP_PORT"] == "587"
+                  assert settings["SMTP_TLS"] == "true"
+                  assert settings["SMTP_SSL"] == "false"
+                  assert settings["SMTP_TIMEOUT_SECONDS"] == "15"
+          PY
+          )
       - run: docker compose up -d --wait db mailpit
       - run: docker compose run --rm --no-deps backend bash scripts/prestart.sh
       - run: docker compose up -d --wait --no-build backend email-worker
