@@ -22,10 +22,11 @@ import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { isLoggedIn } from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
+import { accountEmail } from "@/lib/account-email"
 import { handleError } from "@/utils"
 
 const formSchema = z.object({
-  email: z.email({ message: "Invalid email address" }),
+  email: accountEmail,
 })
 
 type FormData = z.infer<typeof formSchema>
@@ -101,7 +102,7 @@ function RecoverPassword() {
                     <Input
                       data-testid="email-input"
                       placeholder="user@example.com"
-                      type="email"
+                      inputMode="email"
                       {...field}
                     />
                   </FormControl>
