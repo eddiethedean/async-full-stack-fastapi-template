@@ -9,6 +9,7 @@ from app import crud
 from app.api.deps import (
     CurrentUser,
     SessionDep,
+    get_credentials_error,
     get_current_active_superuser,
 )
 from app.api.pagination import PaginationDep
@@ -94,10 +95,13 @@ async def update_user_me(
     """
 
     user = await crud.update_user(
-        session=session, db_user=current_user, user_in=user_in
+        session=session,
+        db_user=current_user,
+        user_in=user_in,
+        expected_auth_version=current_user.auth_version,
     )
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise get_credentials_error()
     return user
 
 
