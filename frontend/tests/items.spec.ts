@@ -10,7 +10,9 @@ import { logInUser } from "./utils/user"
 
 test("Items page is accessible and shows correct title", async ({ page }) => {
   await page.goto("/items")
-  await expect(page.getByRole("heading", { name: "Items" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Items", exact: true }),
+  ).toBeVisible()
   await expect(page.getByText("Create and manage your items")).toBeVisible()
 })
 
@@ -87,17 +89,29 @@ test.describe("Items management", () => {
       await expect(page.getByRole("dialog")).not.toBeVisible()
     })
 
-    test("Edit an item successfully", async ({ page }) => {
+    test("Edit an item after cancelling a draft", async ({ page }) => {
       const itemRow = page.getByRole("row").filter({ hasText: itemTitle })
+      const editItem = page.getByRole("menuitem", { name: "Edit Item" })
+      const dialog = page.getByRole("dialog")
       await itemRow.getByRole("button").last().click()
-      await page.getByRole("menuitem", { name: "Edit Item" }).click()
+      await editItem.click()
+      await dialog.getByLabel("Title").fill(randomItemTitle())
+      await dialog.getByRole("button", { name: "Cancel" }).click()
+      await expect(dialog).not.toBeVisible()
 
-      const updatedTitle = randomItemTitle()
-      await page.getByLabel("Title").fill(updatedTitle)
-      await page.getByRole("button", { name: "Save" }).click()
+      await editItem.click()
+      await expect(dialog.getByLabel("Title")).toHaveValue(itemTitle)
+      const description = "Updated description"
+      await dialog.getByLabel("Description").fill(description)
+      const update = page.waitForRequest(
+        (request) =>
+          request.method() === "PUT" && request.url().includes("/items/"),
+      )
+      await dialog.getByRole("button", { name: "Save" }).click()
 
+      expect((await update).postDataJSON()).toEqual({ description })
       await expect(page.getByText("Item updated successfully")).toBeVisible()
-      await expect(page.getByText(updatedTitle)).toBeVisible()
+      await expect(itemRow).toContainText(description)
     })
 
     test("Delete an item successfully", async ({ page }) => {

@@ -1,7 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 import 'dotenv/config'
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173'
+const baseURL = process.env.PLAYWRIGHT_BASE_URL
+if (!baseURL) {
+  throw new Error(
+    'Playwright requires an isolated test URL. Run bun run test from the repository root.',
+  )
+}
 
 /**
  * Read environment variables from file.
@@ -13,6 +18,7 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173'
  */
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './tests/global-setup.ts',
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
@@ -83,13 +89,4 @@ export default defineConfig({
     //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
     // },
   ],
-
-  /* Run your local dev server before starting the tests */
-  webServer: process.env.PLAYWRIGHT_BASE_URL
-    ? undefined
-    : {
-        command: 'bun run dev',
-        url: baseURL,
-        reuseExistingServer: !process.env.CI,
-      },
 });

@@ -52,6 +52,10 @@ export type BrowserLogin = {
  * BrowserSession
  */
 export type BrowserSession = {
+    /**
+     * Session Id
+     */
+    session_id: string;
     user: UserPublic;
     /**
      * Expires At
@@ -384,9 +388,23 @@ export type ValidationError = {
 export type authDeleteBrowserSessionData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Clear Cookie
+         */
+        clear_cookie?: boolean;
+    };
     url: '/api/v1/auth/session';
 };
+
+export type authDeleteBrowserSessionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authDeleteBrowserSessionError = authDeleteBrowserSessionErrors[keyof authDeleteBrowserSessionErrors];
 
 export type authDeleteBrowserSessionResponses = {
     /**

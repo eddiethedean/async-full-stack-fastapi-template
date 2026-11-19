@@ -12,10 +12,21 @@ let session = {
   generation: 0,
 }
 const listeners = new Set<() => void>()
-export const sessionChanges =
-  typeof BroadcastChannel === "undefined"
-    ? null
-    : new BroadcastChannel("asf-session")
+export const sessionChangeKey = "asf-session-change"
+
+function announceSessionChange() {
+  const change = crypto.getRandomValues(new Uint32Array(4)).join("-")
+  localStorage.setItem(sessionChangeKey, change)
+}
+
+export function withBrowserSessionLock<T>(
+  operation: (canClearCookie: boolean) => Promise<T>,
+): Promise<T> {
+  if (navigator.locks) {
+    return navigator.locks.request("asf-browser-session", () => operation(true))
+  }
+  return operation(false)
+}
 
 export const queryClient = new QueryClient()
 
@@ -52,11 +63,12 @@ export function replaceBrowserSession(
   announce = false,
 ) {
   updateSession(browser, true)
-  if (announce) sessionChanges?.postMessage("changed")
+  if (announce) announceSessionChange()
 }
 
-export function resetBrowserSession() {
+export function resetBrowserSession(announce = false) {
   updateSession(null, false)
+  if (announce) announceSessionChange()
 }
 
 export function setSigningOut(signingOut: boolean) {

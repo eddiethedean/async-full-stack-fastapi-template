@@ -11,11 +11,13 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
 from app.core.db import create_session, engine
 from app.email_outbox import (
+    LEASE_DURATION,
     ClaimedEmail,
     active_key,
     claim_email,
     complete_email,
     get_cipher,
+    renew_email_lease,
 )
 from app.utils import (
     generate_invitation_email,
@@ -25,6 +27,7 @@ from app.utils import (
 )
 
 logger = logging.getLogger(__name__)
+LEASE_RENEW_INTERVAL = LEASE_DURATION.total_seconds() / 4
 
 
 def deliver_email(claimed: ClaimedEmail) -> None:
@@ -51,6 +54,33 @@ def deliver_email(claimed: ClaimedEmail) -> None:
     )
 
 
+async def keep_email_lease(claimed: ClaimedEmail, finished: asyncio.Event) -> None:
+    while not finished.is_set():
+        try:
+            await asyncio.wait_for(finished.wait(), timeout=LEASE_RENEW_INTERVAL)
+            return
+        except TimeoutError:
+            pass
+        try:
+            async with create_session() as session, session.begin():
+                renewed = await renew_email_lease(session, claimed)
+        except SQLAlchemyError:
+            logger.warning("email_outbox id=%s lease_renewal_unavailable", claimed.id)
+            continue
+        if not renewed:
+            return
+
+
+async def deliver_with_lease(claimed: ClaimedEmail) -> None:
+    finished = asyncio.Event()
+    renewal = asyncio.create_task(keep_email_lease(claimed, finished))
+    try:
+        await run_in_threadpool(deliver_email, claimed)
+    finally:
+        finished.set()
+        await renewal
+
+
 async def process_next_email() -> bool:
     async with create_session() as session, session.begin():
         claimed = await claim_email(session)
@@ -63,7 +93,7 @@ async def process_next_email() -> bool:
         if datetime.now(UTC) >= claimed.expires_at:
             error = "expired"
         else:
-            await run_in_threadpool(deliver_email, claimed)
+            await deliver_with_lease(claimed)
     except SMTPRecipientsRefused as exc:
         error = "smtp_recipient"
         retryable = any(400 <= code < 500 for code, _ in exc.recipients.values())

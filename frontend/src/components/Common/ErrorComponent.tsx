@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router"
-import { isAxiosError } from "axios"
 import { Button } from "@/components/ui/button"
+import { isForbiddenError } from "@/utils"
 
 const ErrorComponent = ({ error }: { error: unknown }) => {
-  const forbidden = isAxiosError(error) && error.response?.status === 403
+  const forbidden = isForbiddenError(error)
   return (
     <div
       className="flex min-h-screen items-center justify-center flex-col p-4"

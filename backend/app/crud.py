@@ -57,7 +57,11 @@ async def create_user(*, session: AsyncSession, user_create: UserCreate) -> User
 
 
 async def update_user(
-    *, session: AsyncSession, db_user: User, user_in: UserUpdate | UserUpdateMe
+    *,
+    session: AsyncSession,
+    db_user: User,
+    user_in: UserUpdate | UserUpdateMe,
+    expected_auth_version: int | None = None,
 ) -> User | None:
     user_data = user_in.model_dump(exclude_unset=True, exclude={"password"})
     new_hash = None
@@ -66,14 +70,25 @@ async def update_user(
     user = await lock_user(session, db_user.id)
     if user is None:
         return None
+    # A credential change may have committed after the request authenticated.
+    if expected_auth_version is not None and (
+        not user.is_active or user.auth_version != expected_auth_version
+    ):
+        return None
+    email_changed = user_data.get("email", user.email) != user.email
     if user.invitation_pending and user_data.get("is_active"):
         raise HTTPException(
             status_code=409,
             detail="Accept the invitation before activating this account",
         )
+    if user.invitation_pending and (email_changed or new_hash is not None):
+        raise HTTPException(
+            status_code=409,
+            detail="Accept the invitation before changing email or password",
+        )
     credentials_changed = (
         new_hash is not None
-        or user_data.get("email", user.email) != user.email
+        or email_changed
         or (user.is_active and user_data.get("is_active") is False)
     )
     user.sqlmodel_update(user_data)
