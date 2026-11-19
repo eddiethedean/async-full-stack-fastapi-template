@@ -3,6 +3,7 @@ import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum, auto
 from typing import Literal
 
 from cryptography.fernet import Fernet
@@ -57,6 +58,10 @@ class ClaimedEmail:
     expires_at: datetime
 
 
+class ClaimOutcome(Enum):
+    RETIRED = auto()
+
+
 def active_key() -> str:
     if not settings.EMAIL_OUTBOX_KEYS and settings.FASTAPI_ENV == "development":
         return "development"
@@ -108,7 +113,7 @@ async def database_now(session: AsyncSession) -> datetime:
     return (await session.exec(select(func.now()))).one()
 
 
-async def claim_email(session: AsyncSession) -> ClaimedEmail | None:
+async def claim_email(session: AsyncSession) -> ClaimedEmail | ClaimOutcome | None:
     now = await database_now(session)
     row = (
         await session.exec(
@@ -133,7 +138,7 @@ async def claim_email(session: AsyncSession) -> ClaimedEmail | None:
         row.last_error = "expired" if row.expires_at <= now else "lease_exhausted"
         clear_payload(row)
         row.failed_at = now
-        return None
+        return ClaimOutcome.RETIRED
 
     lease_id = uuid.uuid4()
     row.lease_id = lease_id

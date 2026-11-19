@@ -17,6 +17,7 @@ from app.core.db import create_session, engine
 from app.email_outbox import (
     LEASE_DURATION,
     ClaimedEmail,
+    ClaimOutcome,
     active_key,
     claim_email,
     complete_email,
@@ -113,12 +114,15 @@ async def deliver_with_lease(
 
 
 async def process_next_email(*, on_progress: Callable[[], None] | None = None) -> bool:
+    """Return whether the worker claimed or retired a job in this poll."""
     async with create_session() as session, session.begin():
         claimed = await claim_email(session)
     if on_progress is not None:
         on_progress()
     if claimed is None:
         return False
+    if claimed is ClaimOutcome.RETIRED:
+        return True
 
     error = None
     retryable = False

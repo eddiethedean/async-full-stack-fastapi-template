@@ -14,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.access_logs import SensitivePathFilter
 from app.core.db import create_session
 from app.email_outbox import (
+    MAX_ATTEMPTS,
     ClaimedEmail,
     EmailKind,
     EmailOutbox,
@@ -65,7 +66,7 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
         )
     async with create_session() as session_a, session_a.begin():
         first = await claim_email(session_a)
-        assert first and first.payload and first.key_version
+        assert isinstance(first, ClaimedEmail) and first.payload and first.key_version
         assert (
             get_cipher(first.key_version).decrypt(first.payload)
             == b"test-invitation-credential"
@@ -80,7 +81,7 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
         assert not await renew_email_lease(session, first)
     async with create_session() as session, session.begin():
         second = await claim_email(session)
-        assert second and second.id == first.id
+        assert isinstance(second, ClaimedEmail) and second.id == first.id
         assert second.lease_id != first.lease_id
         assert not await renew_email_lease(session, first)
         assert not await complete_email(session, first)
@@ -201,21 +202,56 @@ async def test_worker_renders_credential_before_delivery(
     assert not await process_next_email()
 
 
-async def test_worker_drops_expired_credential() -> None:
+@pytest.mark.parametrize(
+    ("expires_delta", "attempts", "last_error"),
+    [
+        (timedelta(seconds=-1), 0, "expired"),
+        (timedelta(hours=1), MAX_ATTEMPTS, "lease_exhausted"),
+    ],
+)
+async def test_worker_keeps_polling_after_retiring_a_job(
+    monkeypatch: pytest.MonkeyPatch,
+    expires_delta: timedelta,
+    attempts: int,
+    last_error: str,
+) -> None:
+    delivered: list[str] = []
+
+    def smtp(*, email_to: str, **_data: str) -> None:
+        delivered.append(email_to)
+
+    monkeypatch.setattr("app.email_worker.send_email", smtp)
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
             kind="invite",
-            recipient="expired@example.com",
+            recipient="retired@example.com",
             deduplication_key=uuid4().hex,
-            token="expired-credential",
-            expires_delta=timedelta(seconds=-1),
+            token="temporary-credential",
+            expires_delta=expires_delta,
         )
-    assert not await process_next_email()
+        await session.flush()
+        retired = (await session.exec(select(EmailOutbox))).one()
+        retired.available_at -= timedelta(seconds=1)
+        retired.attempts = attempts
+        retired_id = retired.id
+        await enqueue_email(
+            session,
+            kind="welcome",
+            recipient="ready@example.com",
+            deduplication_key=uuid4().hex,
+        )
+
+    assert await process_next_email()
+    assert not delivered
     async with create_session() as session:
-        row = (await session.exec(select(EmailOutbox))).one()
-        assert row.payload is None
-        assert row.failed_at and row.last_error == "expired"
+        row = await session.get(EmailOutbox, retired_id)
+        assert row and row.payload is None and row.key_version is None
+        assert row.failed_at and row.last_error == last_error
+
+    assert await process_next_email()
+    assert delivered == ["ready@example.com"]
+    assert not await process_next_email()
 
 
 async def test_worker_marks_permanent_delivery_failure(
