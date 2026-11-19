@@ -869,7 +869,7 @@ export type usersDeleteUserData = {
 
 export type usersDeleteUserErrors = {
     /**
-     * Removal of the last active superuser
+     * Conflicting superuser change
      */
     409: unknown;
     /**
@@ -933,7 +933,7 @@ export type usersUpdateUserData = {
 
 export type usersUpdateUserErrors = {
     /**
-     * Email conflict or removal of the last active superuser
+     * Email conflict or conflicting superuser change
      */
     409: unknown;
     /**

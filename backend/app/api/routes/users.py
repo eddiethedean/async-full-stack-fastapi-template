@@ -217,9 +217,7 @@ async def read_user_by_id(
     "/{user_id}",
     dependencies=[Depends(get_current_active_superuser)],
     response_model=UserPublic,
-    responses={
-        409: {"description": "Email conflict or removal of the last active superuser"}
-    },
+    responses={409: {"description": "Email conflict or conflicting superuser change"}},
 )
 async def update_user(
     *,
@@ -246,7 +244,7 @@ async def update_user(
 @router.delete(
     "/{user_id}",
     dependencies=[Depends(get_current_active_superuser)],
-    responses={409: {"description": "Removal of the last active superuser"}},
+    responses={409: {"description": "Conflicting superuser change"}},
 )
 async def delete_user(
     session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID

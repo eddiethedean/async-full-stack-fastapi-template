@@ -2,9 +2,9 @@ import uuid
 from typing import Literal
 
 from fastapi import HTTPException
-from psycopg.errors import UniqueViolation
+from psycopg.errors import SerializationFailure, UniqueViolation
 from pydantic import MISSING
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -68,17 +68,27 @@ async def lock_active_superuser_removal(session: AsyncSession) -> None:
 async def require_other_active_superuser(session: AsyncSession, user: User) -> None:
     if not (user.is_active and user.is_superuser):
         return
-    other = (
-        await session.exec(
-            select(User.id)
-            .where(
-                col(User.is_active).is_(True),
-                col(User.is_superuser).is_(True),
-                col(User.id) != user.id,
-            )
-            .limit(1)
+    statement = (
+        select(User.id)
+        .where(
+            col(User.is_active).is_(True),
+            col(User.is_superuser).is_(True),
+            col(User.id) != user.id,
         )
-    ).first()
+        .limit(1)
+        .with_for_update(read=True)
+    )
+    # A row lock detects superuser changes hidden by a repeatable-read snapshot.
+    try:
+        other = (await session.exec(statement)).first()
+    except OperationalError as error:
+        if not isinstance(error.orig, SerializationFailure):
+            raise
+        await session.rollback()
+        raise HTTPException(
+            status_code=409, detail="Superuser membership changed. Retry the request."
+        ) from error
+
     if other is None:
         raise HTTPException(
             status_code=409, detail="Cannot remove the last active superuser"

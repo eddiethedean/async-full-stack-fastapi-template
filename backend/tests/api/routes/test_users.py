@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
 from app.core.config import settings
-from app.core.db import create_session
+from app.core.db import create_session, engine
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
 from app.models import User, UserCreate
@@ -594,11 +594,21 @@ async def test_cannot_remove_last_active_superuser(
     assert listing.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("isolation_level", "conflict_detail"),
+    [
+        ("READ COMMITTED", "Cannot remove the last active superuser"),
+        ("REPEATABLE READ", "Superuser membership changed. Retry the request."),
+    ],
+)
 async def test_concurrent_superuser_removals_preserve_one_admin(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],
     sole_active_superuser: User,
     db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    isolation_level: str,
+    conflict_detail: str,
 ) -> None:
     email, password = random_email(), random_lower_string()
     second = await crud.create_user(
@@ -608,6 +618,25 @@ async def test_concurrent_superuser_removals_preserve_one_admin(
     second_headers = await user_authentication_headers(
         client=client, email=email, password=password
     )
+    request_engine = engine.execution_options(isolation_level=isolation_level)
+    both_ready = asyncio.Event()
+    ready_count = 0
+    acquire_lock = crud.lock_active_superuser_removal
+
+    def create_request_session() -> AsyncSession:
+        return AsyncSession(request_engine, expire_on_commit=False)
+
+    async def wait_for_both_requests(session: AsyncSession) -> None:
+        # Both requests must finish reading the target before either can write.
+        nonlocal ready_count
+        ready_count += 1
+        if ready_count == 2:
+            both_ready.set()
+        await asyncio.wait_for(both_ready.wait(), timeout=5)
+        await acquire_lock(session)
+
+    monkeypatch.setattr("app.api.deps.create_session", create_request_session)
+    monkeypatch.setattr(crud, "lock_active_superuser_removal", wait_for_both_requests)
     try:
         responses = await asyncio.gather(
             client.patch(
@@ -622,6 +651,10 @@ async def test_concurrent_superuser_removals_preserve_one_admin(
             ),
         )
         assert sorted(response.status_code for response in responses) == [200, 409]
+        conflict = next(
+            response for response in responses if response.status_code == 409
+        )
+        assert conflict.json() == {"detail": conflict_detail}
         active_ids = (
             await db.exec(
                 select(User.id).where(
