@@ -32,6 +32,7 @@ from app.email_outbox import (
 )
 from app.email_worker import deliver_with_lease, process_next_email
 from app.models import User
+from app.utils import EmailData
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
@@ -167,7 +168,17 @@ async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
     user_id = created.json()["id"]
     before_smtp = asyncio.Event()
     start_smtp = asyncio.Event()
+    deletion_waiting = asyncio.Event()
+    delivery_progress = asyncio.Event()
+    progress_ticks = 0
     dispatch = email_worker.run_in_threadpool
+
+    def report_progress() -> None:
+        nonlocal progress_ticks
+        if deletion_waiting.is_set():
+            progress_ticks += 1
+            if progress_ticks == 2:
+                delivery_progress.set()
 
     async def pause_before_smtp(
         function: Callable[..., Any], *args: Any, **kwargs: Any
@@ -178,8 +189,10 @@ async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
         return await dispatch(function, *args, **kwargs)
 
     monkeypatch.setattr(email_worker, "run_in_threadpool", pause_before_smtp)
+    monkeypatch.setattr(email_worker, "LEASE_RENEW_INTERVAL", 0.01)
+    monkeypatch.setattr("app.email_outbox.LEASE_DURATION", timedelta(seconds=1))
     with patch.object(email_worker, "send_email") as send:
-        delivery = asyncio.create_task(process_next_email())
+        delivery = asyncio.create_task(process_next_email(on_progress=report_progress))
         await asyncio.wait_for(before_smtp.wait(), timeout=5)
         deletion = asyncio.create_task(
             client.delete(f"{users_url}{user_id}", headers=superuser_token_headers)
@@ -199,7 +212,22 @@ async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
                             break
                     await asyncio.sleep(0.01)
                 assert not deletion.done(), "deletion committed before SMTP started"
+                deletion_waiting.set()
+                await delivery_progress.wait()
+                assert not deletion.done()
                 send.assert_not_called()
+                async with create_session() as observer:
+                    await observer.exec(
+                        text(
+                            "SELECT pg_sleep(GREATEST(EXTRACT(EPOCH FROM "
+                            "lease_expires_at - clock_timestamp()), 0)) FROM email_outbox"
+                        )
+                    )
+                async with create_session() as contender, contender.begin():
+                    assert await contender.scalar(
+                        text("SELECT lease_expires_at <= now() FROM email_outbox")
+                    )
+                    assert await claim_email(contender) is None
         finally:
             start_smtp.set()
             assert await delivery
@@ -247,23 +275,25 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
         assert row and row.delivered_at and row.payload is None
 
 
-async def test_worker_renews_lease_during_delivery(
+async def test_worker_renews_lease_while_rendering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     polled = asyncio.Event()
     renewed = asyncio.Event()
-    sending = Event()
-    finish_delivery = Event()
+    rendering = Event()
+    finish_rendering = Event()
+    render = email_worker.render_email
 
     def report_progress() -> None:
-        if sending.is_set():
+        if rendering.is_set():
             renewed.set()
         else:
             polled.set()
 
-    def smtp(**_data: str) -> None:
-        sending.set()
-        assert finish_delivery.wait(timeout=10)
+    def slow_render(claimed: ClaimedEmail) -> EmailData:
+        rendering.set()
+        assert finish_rendering.wait(timeout=10)
+        return render(claimed)
 
     async def track_renewal(session: AsyncSession, claimed: ClaimedEmail) -> bool:
         row = await session.get(EmailOutbox, claimed.id)
@@ -274,7 +304,7 @@ async def test_worker_renews_lease_during_delivery(
         assert row.lease_expires_at and row.lease_expires_at > previous_expiry
         return True
 
-    monkeypatch.setattr("app.email_worker.send_email", smtp)
+    monkeypatch.setattr(email_worker, "render_email", slow_render)
     monkeypatch.setattr("app.email_worker.renew_email_lease", track_renewal)
     monkeypatch.setattr("app.email_worker.LEASE_RENEW_INTERVAL", 0.01)
     async with create_session() as session, session.begin():
@@ -285,13 +315,16 @@ async def test_worker_renews_lease_during_delivery(
             deduplication_key=uuid4().hex,
         )
 
-    delivery = asyncio.create_task(process_next_email(on_progress=report_progress))
-    try:
-        await asyncio.wait_for(renewed.wait(), timeout=5)
-        assert polled.is_set() and not delivery.done()
-    finally:
-        finish_delivery.set()
-        assert await delivery
+    with patch.object(email_worker, "send_email") as send:
+        delivery = asyncio.create_task(process_next_email(on_progress=report_progress))
+        try:
+            await asyncio.wait_for(renewed.wait(), timeout=5)
+            assert polled.is_set() and not delivery.done()
+            send.assert_not_called()
+        finally:
+            finish_rendering.set()
+            assert await delivery
+        send.assert_called_once()
 
     async with create_session() as session:
         row = (await session.exec(select(EmailOutbox))).one()

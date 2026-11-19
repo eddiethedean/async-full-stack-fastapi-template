@@ -23,6 +23,7 @@ from app.email_outbox import (
     active_key,
     claim_email,
     complete_email,
+    database_now,
     get_cipher,
     lock_current_email_lease,
     queue_stats,
@@ -74,7 +75,7 @@ def render_email(claimed: ClaimedEmail) -> EmailData:
     raise ValueError("Missing email payload")
 
 
-async def keep_email_lease(
+async def keep_email_claim(
     claimed: ClaimedEmail,
     finished: asyncio.Event,
     on_progress: Callable[[], None] | None,
@@ -87,7 +88,9 @@ async def keep_email_lease(
         except TimeoutError:
             pass
         if delivery_session is not None:
-            renewed = await renew_email_lease(delivery_session, claimed)
+            # The row lock protects the claim during SMTP. Updating the row
+            # repeatedly here can recheck its FK against a user being deleted.
+            await database_now(delivery_session)
         else:
             try:
                 async with create_session() as session, session.begin():
@@ -97,21 +100,21 @@ async def keep_email_lease(
                     "email_outbox id=%s lease_renewal_unavailable", claimed.id
                 )
                 continue
-        if not renewed:
-            return
+            if not renewed:
+                return
         if on_progress is not None:
             on_progress()
 
 
 @asynccontextmanager
-async def renewing_email_lease(
+async def monitor_email_claim(
     claimed: ClaimedEmail,
     on_progress: Callable[[], None] | None,
     delivery_session: AsyncSession | None = None,
 ) -> AsyncIterator[None]:
     finished = asyncio.Event()
     renewal = asyncio.create_task(
-        keep_email_lease(claimed, finished, on_progress, delivery_session)
+        keep_email_claim(claimed, finished, on_progress, delivery_session)
     )
     try:
         yield
@@ -125,13 +128,13 @@ async def deliver_with_lease(
     claimed: ClaimedEmail,
     on_progress: Callable[[], None] | None,
 ) -> bool:
-    async with renewing_email_lease(claimed, on_progress):
+    async with monitor_email_claim(claimed, on_progress):
         email = await run_in_threadpool(render_email, claimed)
     # The delete trigger updates this row. Hold its lock until the SMTP
     # attempt and its recorded outcome are complete.
     if not await lock_current_email_lease(session, claimed):
         return False
-    async with renewing_email_lease(claimed, on_progress, session):
+    async with monitor_email_claim(claimed, on_progress, session):
         await run_in_threadpool(
             send_email,
             email_to=claimed.recipient,
