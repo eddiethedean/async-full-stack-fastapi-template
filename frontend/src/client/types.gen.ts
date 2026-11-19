@@ -1154,6 +1154,10 @@ export type itemsUpdateItemData = {
 
 export type itemsUpdateItemErrors = {
     /**
+     * Item changed during the update
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;

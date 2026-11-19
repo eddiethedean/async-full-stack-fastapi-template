@@ -2,6 +2,8 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from psycopg.errors import SerializationFailure
+from sqlalchemy.exc import OperationalError
 from sqlmodel import col, update
 
 from app import crud
@@ -55,7 +57,11 @@ async def create_item(
     )
 
 
-@router.put("/{id}", response_model=ItemPublic)
+@router.put(
+    "/{id}",
+    response_model=ItemPublic,
+    responses={409: {"description": "Item changed during the update"}},
+)
 async def update_item(
     *,
     session: SessionDep,
@@ -78,11 +84,19 @@ async def update_item(
     statement = update(Item).where(col(Item.id) == id)
     if not current_user.is_superuser:
         statement = statement.where(col(Item.owner_id) == current_user.id)
-    result = await session.exec(statement.values(update_dict).returning(Item))
-    updated = result.scalar_one_or_none()
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-    await session.commit()
+    try:
+        result = await session.exec(statement.values(update_dict).returning(Item))
+        updated = result.scalar_one_or_none()
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Item not found")
+        await session.commit()
+    except OperationalError as error:
+        if not isinstance(error.orig, SerializationFailure):
+            raise
+        await session.rollback()
+        raise HTTPException(
+            status_code=409, detail="Item changed during the update. Retry the request."
+        ) from error
     return updated
 
 

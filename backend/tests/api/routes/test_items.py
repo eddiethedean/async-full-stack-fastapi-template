@@ -9,7 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.api.pagination import PaginationParams
 from app.api.routes.items import read_items
 from app.core.config import settings
-from app.core.db import create_session
+from app.core.db import create_session, engine
 from app.crud import create_user
 from app.models import Item, UserCreate
 from tests.utils.item import create_random_item
@@ -226,8 +226,20 @@ async def test_update_item_not_found(
     assert content["detail"] == "Item not found"
 
 
+@pytest.mark.parametrize(
+    ("isolation_level", "status_code", "detail"),
+    [
+        ("READ COMMITTED", 404, "Item not found"),
+        ("REPEATABLE READ", 409, "Item changed during the update. Retry the request."),
+    ],
+)
 async def test_update_item_deleted_after_read(
-    client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    isolation_level: str,
+    status_code: int,
+    detail: str,
 ) -> None:
     email, password = random_email(), random_lower_string()
     user = await create_user(
@@ -239,6 +251,11 @@ async def test_update_item_deleted_after_read(
     headers = await user_authentication_headers(
         client=client, email=email, password=password
     )
+    request_engine = engine.execution_options(isolation_level=isolation_level)
+
+    def create_request_session() -> AsyncSession:
+        return AsyncSession(request_engine, expire_on_commit=False)
+
     get = AsyncSession.get
 
     async def delete_after_read(
@@ -252,15 +269,17 @@ async def test_update_item_deleted_after_read(
                 await writer.delete(target)
         return row
 
+    monkeypatch.setattr("app.api.deps.create_session", create_request_session)
     monkeypatch.setattr(AsyncSession, "get", delete_after_read)
-    response = await client.put(
-        f"{settings.API_V1_STR}/items/{item.id}",
-        headers=headers,
-        json={"title": "Updated title"},
-    )
+    url = f"{settings.API_V1_STR}/items/{item.id}"
+    update = {"title": "Updated title"}
+    response = await client.put(url, headers=headers, json=update)
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Item not found"}
+    assert response.status_code == status_code
+    assert response.json() == {"detail": detail}
+    retry = await client.put(url, headers=headers, json=update)
+    assert retry.status_code == 404
+    assert retry.json() == {"detail": "Item not found"}
     async with create_session() as reader:
         assert await get(reader, Item, item.id) is None
 
