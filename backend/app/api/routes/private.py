@@ -1,10 +1,9 @@
 from fastapi import APIRouter
 from sqlmodel import Field
-from starlette.concurrency import run_in_threadpool
 
+from app import crud
 from app.api.deps import SessionDep
-from app.core.security import get_password_hash
-from app.models import User, UserPublic, UserRegister
+from app.models import User, UserCreate, UserPublic, UserRegister
 
 router = APIRouter(tags=["private"], prefix="/private")
 
@@ -25,13 +24,5 @@ async def create_user(user_in: PrivateUserCreate, session: SessionDep) -> User:
     Create a new user.
     """
 
-    user = User(
-        email=user_in.email,
-        full_name=user_in.full_name,
-        hashed_password=await run_in_threadpool(get_password_hash, user_in.password),
-    )
-
-    session.add(user)
-    await session.commit()
-
-    return user
+    user_create = UserCreate.model_validate(user_in)
+    return await crud.create_user(session=session, user_create=user_create)

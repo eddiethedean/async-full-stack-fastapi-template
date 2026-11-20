@@ -115,7 +115,9 @@ bun run test:ui
 Both commands start a disposable Compose project and remove its volumes on
 exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
 running tests that require sign-in. Playwright verifies test mode before signing
-in. The browser test setup routes are excluded from the public client.
+in. The browser test setup routes are excluded from the public client. A fixture
+creation request for an existing email returns HTTP 409 and preserves the
+existing account. Use a unique email when creating a new fixture.
 
 The backend command checks Alembic schema drift. The Compose runner also
 rehearses the upgrade from the last release using a second disposable database
