@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -34,6 +34,7 @@ async def test_create_item(
     assert content["description"] == data["description"]
     assert "id" in content
     assert "owner_id" in content
+    assert datetime.fromisoformat(content["created_at"]).utcoffset() == timedelta()
 
 
 async def test_read_item(
@@ -132,17 +133,17 @@ async def test_item_pages_have_stable_order_and_filtered_total(
     other_user = await create_random_user(db)
     same_time = datetime.now(UTC)
     ids = sorted([uuid.uuid4(), uuid.uuid4()], reverse=True)
-    legacy_item = Item(title="Last", owner_id=user.id)
+    recent_item = Item(
+        title="Newest", owner_id=user.id, created_at=same_time + timedelta(seconds=1)
+    )
     db.add_all(
         [
             Item(id=ids[0], title="First", owner_id=user.id, created_at=same_time),
             Item(id=ids[1], title="Second", owner_id=user.id, created_at=same_time),
-            legacy_item,
+            recent_item,
             Item(title="Another user", owner_id=other_user.id, created_at=same_time),
         ]
     )
-    await db.flush()
-    legacy_item.created_at = None
     await db.commit()
     headers = await user_authentication_headers(
         client=client, email=email, password=password
@@ -158,7 +159,7 @@ async def test_item_pages_have_stable_order_and_filtered_total(
         assert result["count"] == 3
         results.append([row["id"] for row in result["data"]])
 
-    assert results == [[str(item_id) for item_id in ids], [str(legacy_item.id)], []]
+    assert results == [[str(recent_item.id), str(ids[0])], [str(ids[1])], []]
 
 
 async def test_item_page_and_total_share_a_snapshot(

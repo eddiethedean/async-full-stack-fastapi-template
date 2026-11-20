@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column(
             "auth_version", sa.Integer(), server_default=sa.text("0"), nullable=False
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
             "NOT invitation_pending OR NOT is_active",
             name="ck_user_pending_invitation_inactive",
@@ -144,7 +144,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("description", sa.String(length=255), nullable=True),
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("owner_id", sa.Uuid(), nullable=False),
         sa.ForeignKeyConstraint(["owner_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -154,7 +154,7 @@ def upgrade() -> None:
         "item",
         [
             "owner_id",
-            sa.text("created_at DESC NULLS LAST"),
+            sa.text("created_at DESC"),
             sa.text("id DESC"),
         ],
         unique=False,
