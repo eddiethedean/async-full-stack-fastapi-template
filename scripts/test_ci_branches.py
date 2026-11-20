@@ -26,6 +26,10 @@ def check_job_group(job: dict, name: str) -> None:
 
 
 def check_workflow_gates() -> None:
+    has_browser = (
+        Path("frontend/package.json").is_file()
+        or (WORKFLOWS / "playwright.yml").is_file()
+    )
     for workflow, job, cancels in (
         ("dependency-audit", "audit", True),
         ("playwright", "changes", True),
@@ -35,6 +39,9 @@ def check_workflow_gates() -> None:
         ("zizmor", "zizmor", False),
         ("smokeshow", "smokeshow", False),
     ):
+        # The API-only recipe removes both the frontend and its workflow.
+        if workflow == "playwright" and not has_browser:
+            continue
         config = read_workflow(workflow)
         jobs = config["jobs"]
         event = "github.event_name"
@@ -68,13 +75,13 @@ def check_workflow_gates() -> None:
             f"needs.{PUSH_GATE}.outputs.matches == 'true') }}}}"
         ), workflow
 
-    browser_jobs = read_workflow("playwright")["jobs"]
-    check_job_group(
-        browser_jobs["test-playwright"], "test-playwright-${{ matrix.shardIndex }}"
-    )
-    check_job_group(
-        browser_jobs["merge-playwright-reports"], "merge-playwright-reports"
-    )
+        if workflow == "playwright":
+            check_job_group(
+                jobs["test-playwright"], "test-playwright-${{ matrix.shardIndex }}"
+            )
+            check_job_group(
+                jobs["merge-playwright-reports"], "merge-playwright-reports"
+            )
 
 
 def check_exact_comparison() -> None:
