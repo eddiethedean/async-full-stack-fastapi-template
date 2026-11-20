@@ -54,6 +54,11 @@ export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))
 export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
+Set `POSTGRES_PASSWORD` to the raw password, including any characters such as
+`/` or `%`. Compose passes the same password to PostgreSQL and the application,
+which encodes it when building its connection URL. Use Compose files and a
+backend image built from the same revision.
+
 Mail is disabled when `SMTP_HOST` or `EMAILS_FROM_EMAIL` is unset. To enable mail,
 define both and set `EMAIL_OUTBOX_KEYS` to a JSON object with a Fernet key for
 the active `EMAIL_OUTBOX_KEY_VERSION`, which defaults to `v1`. To use an

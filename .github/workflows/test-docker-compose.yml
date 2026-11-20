@@ -21,7 +21,7 @@ jobs:
       COMPOSE_PROJECT_NAME: asf-smoke-${{ github.run_id }}-${{ github.run_attempt }}
       SECRET_KEY: compose-smoke-tests-only-secret-key
       FIRST_SUPERUSER_PASSWORD: compose-smoke-tests-only-password
-      POSTGRES_PASSWORD: compose-smoke-tests-only-postgres
+      POSTGRES_PASSWORD: compose-smoke-tests-only/postgres%2F
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
