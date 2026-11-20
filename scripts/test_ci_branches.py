@@ -68,8 +68,7 @@ def check_workflow_gates() -> None:
             isolate_run = "github.event_name == 'push'"
             if workflow in {"dependency-audit", "playwright"}:
                 isolate_run = (
-                    f"({isolate_run} || (github.event_name == 'workflow_dispatch' "
-                    "&& startsWith(github.ref, 'refs/heads/')))"
+                    f"({isolate_run} || github.event_name == 'workflow_dispatch')"
                 )
             # Workflow-level groups cannot compare ref names case-sensitively.
             # Only an admitted run can cancel an older run on its exact ref.
@@ -90,11 +89,10 @@ def check_workflow_gates() -> None:
         if workflow in {"dependency-audit", "playwright"}:
             assert config["run-name"] == (
                 "${{ github.event_name == 'workflow_dispatch' "
-                "&& startsWith(github.ref, 'refs/heads/') "
-                "&& format('Manual branch CI on {0}', github.ref) || '' }}"
+                "&& format('Manual {0} CI on {1}', github.ref_type, github.ref) || '' }}"
             )
             assert jobs[PUSH_GATE]["if"] == (
-                "(github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/')) || "
+                "github.event_name == 'workflow_dispatch' || "
                 "(github.event_name == 'push' && github.event.ref == "
                 "format('refs/heads/{0}', github.event.repository.default_branch))"
             )
@@ -223,7 +221,8 @@ elif endpoint.startswith("workflows/101/runs"):
     status = next(arg.removeprefix("status=") for arg in args if arg.startswith("status="))
     if status == os.environ.get("MOCK_QUERY_FAILURE"):
         sys.exit(1)
-    assert f"branch={os.environ['PUSH_REF'].removeprefix('refs/heads/')}" in args, args
+    ref_name = os.environ["PUSH_REF"].split("/", 2)[2]
+    assert f"branch={ref_name}" in args, args
     runs = json.loads(os.environ["MOCK_RUNS"])
     print(json.dumps({"workflow_runs": [run for run in runs if run["status"] == status]}))
 elif endpoint.endswith("/cancel"):
@@ -357,8 +356,8 @@ def check_monotonic_cancellation() -> None:
         )
         assert execute(410, 9, succeeds=False, MOCK_QUERY_FAILURE="queued") == []
 
-        # GitHub lists manual tag runs under the same short head_branch.
-        # Only the exact branch run carries a matching full ref in its title.
+        # GitHub lists branches and tags under the same short head_branch.
+        # The run title identifies the exact, case-sensitive ref.
         manual_runs = [
             *runs,
             run(
@@ -375,6 +374,26 @@ def check_monotonic_cancellation() -> None:
                 event="workflow_dispatch",
                 display_title="Playwright Tests",
             ),
+            run(
+                415,
+                6,
+                head_branch="trunk/Main",
+                event="workflow_dispatch",
+                display_title="Manual tag CI on refs/tags/trunk/Main",
+            ),
+            run(
+                416,
+                7,
+                event="workflow_dispatch",
+                display_title="Manual tag CI on refs/tags/trunk/main",
+            ),
+            run(
+                417,
+                11,
+                head_branch="trunk/Main",
+                event="workflow_dispatch",
+                display_title="Manual tag CI on refs/tags/trunk/Main",
+            ),
         ]
         cancelled = execute(
             411,
@@ -384,6 +403,14 @@ def check_monotonic_cancellation() -> None:
             MOCK_RUNS=json.dumps(manual_runs),
         )
         assert cancelled == ["405", "413"], cancelled
+        cancelled = execute(
+            411,
+            10,
+            GITHUB_EVENT_NAME="workflow_dispatch",
+            PUSH_REF="refs/tags/trunk/Main",
+            MOCK_RUNS=json.dumps(manual_runs),
+        )
+        assert cancelled == ["415"], cancelled
 
 
 if __name__ == "__main__":
