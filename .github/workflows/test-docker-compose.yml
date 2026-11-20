@@ -50,6 +50,8 @@ jobs:
           printf '::add-mask::%s\n' "$keys"
           printf 'EMAIL_OUTBOX_KEYS=%s\n' "$keys" >> "$GITHUB_ENV"
       - run: docker compose build backend
+      - name: Verify restricted Traefik discovery in development and deployment
+        run: bash scripts/test-docker-discovery.sh
       - name: Verify development Compose account email links
         run: |
           compose=(docker compose --project-name "${COMPOSE_PROJECT_NAME}-dev-links" -f compose.yml -f compose.override.yml)

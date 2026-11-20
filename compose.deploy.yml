@@ -17,6 +17,7 @@ services:
     command:
       # Enable Docker in Traefik, so that it reads labels from Docker services
       - --providers.docker
+      - --providers.docker.endpoint=tcp://docker-discovery:2375
       # Do not expose all Docker services, only the ones explicitly exposed
       - --providers.docker.exposedbydefault=false
       # Create an entrypoint "http" listening on port 80
@@ -32,6 +33,9 @@ services:
       - --certificatesresolvers.le.acme.tlschallenge=true
       # Enable the Traefik log, for configurations and errors
       - --log
+
+  docker-discovery:
+    restart: always
 
   db:
     restart: always
