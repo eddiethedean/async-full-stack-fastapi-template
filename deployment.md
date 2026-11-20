@@ -122,14 +122,18 @@ request merges into the default branch, **Create Draft Release** uses that
 merge commit and its release notes. The archived template notes are separate
 from this process.
 
-To preview a patch bump without editing the active changelog:
+Add at least one entry under **Latest Changes** before previewing a patch
+bump. The preview copies the changelog and prints the proposed release
+notes only after the bump succeeds.
 
 ```bash
-preview_notes=$(mktemp)
-cp release-notes.md "$preview_notes"
-uv run python scripts/prepare_release.py prepare patch --release-notes-file "$preview_notes"
-uv run python scripts/prepare_release.py release-notes --release-notes-file "$preview_notes"
-rm "$preview_notes"
+(
+    preview_notes=$(mktemp) || exit
+    trap 'rm -f "$preview_notes"' EXIT
+    cp release-notes.md "$preview_notes" &&
+        uv run python scripts/prepare_release.py prepare patch --release-notes-file "$preview_notes" &&
+        uv run python scripts/prepare_release.py release-notes --release-notes-file "$preview_notes"
+)
 ```
 
 Push checks follow the repository's configured default branch. You can
