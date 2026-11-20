@@ -144,10 +144,10 @@ it on delivery or terminal failure.
 Deleting an account cancels its queued email, clears queued credentials, and
 prevents further retries. After rendering, the worker locks the outbox row,
 checks its lease, and holds the lock through the SMTP attempt and result update.
-Changing an account email likewise cancels its queued password recovery and
-clears the recovery payload. A new recovery request uses the current address.
-If the worker takes the lock first, deletion or the email change waits for
-that attempt to finish.
+Changing an account email or password, completing a reset, or deactivating
+the account cancels pending password recovery and clears its queued token.
+Active accounts can request fresh recovery at their current address. If the
+worker takes the lock first, the account change waits for that attempt to finish.
 
 ## Recovering legacy bcrypt accounts
 

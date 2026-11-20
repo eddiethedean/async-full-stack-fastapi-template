@@ -211,6 +211,108 @@ async def test_email_change_cancels_queued_recovery(
         assert send.call_args.kwargs["email_to"] == new_email
 
 
+@pytest.mark.parametrize(
+    ("change", "claimed_before_change"),
+    [("reset", False), ("self", False), ("admin", True), ("deactivate", False)],
+    ids=["password-reset", "self-password", "claimed-admin-password", "deactivate"],
+)
+async def test_credential_invalidation_cancels_pending_recovery(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    claimed_before_change: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    email, password = random_email(), random_lower_string()
+    prefix = settings.API_V1_STR
+    signup = await client.post(
+        f"{prefix}/users/signup", json={"email": email, "password": password}
+    )
+    assert signup.status_code == 200
+    user_id = signup.json()["id"]
+    recovery_url = f"{prefix}/password-recovery"
+    assert (await client.post(recovery_url, json={"email": email})).status_code == 200
+
+    new_password = random_lower_string()
+    token = ""
+    if change == "reset":
+        async with create_session() as session:
+            job = (await session.exec(select(EmailOutbox))).one()
+            assert job.payload is not None and job.key_version is not None
+            token = get_cipher(job.key_version).decrypt(job.payload).decode()
+        with patch.object(email_worker, "send_email") as send:
+            assert await process_next_email()
+            send.assert_called_once()
+        assert (
+            await client.post(recovery_url, json={"email": email})
+        ).status_code == 200
+
+    async def change_credentials() -> None:
+        if change == "reset":
+            result = await client.post(
+                f"{prefix}/reset-password/",
+                json={"token": token, "new_password": new_password},
+            )
+        elif change == "self":
+            headers = await user_authentication_headers(
+                client=client, email=email, password=password
+            )
+            result = await client.patch(
+                f"{prefix}/users/me/password",
+                headers=headers,
+                json={"current_password": password, "new_password": new_password},
+            )
+        else:
+            result = await client.patch(
+                f"{prefix}/users/{user_id}",
+                headers=superuser_token_headers,
+                json=(
+                    {"is_active": False}
+                    if change == "deactivate"
+                    else {"password": new_password}
+                ),
+            )
+        assert result.status_code == 200
+
+    async def change_before_send(
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
+        await change_credentials()
+        return await deliver_with_lease(session, claimed, on_progress)
+
+    with patch.object(email_worker, "send_email") as send:
+        if claimed_before_change:
+            with monkeypatch.context() as patch_worker:
+                patch_worker.setattr(
+                    email_worker, "deliver_with_lease", change_before_send
+                )
+                assert await process_next_email()
+        else:
+            await change_credentials()
+        send.assert_not_called()
+        assert not await process_next_email()
+
+        async with create_session() as session:
+            jobs = (await session.exec(select(EmailOutbox))).all()
+            assert len(jobs) == (2 if change == "reset" else 1)
+            job = next(job for job in jobs if job.delivered_at is None)
+            assert job.failed_at is not None
+            assert job.last_error == "account_credentials_changed"
+            assert job.payload is None and job.key_version is None
+            assert job.lease_id is None and job.lease_expires_at is None
+
+        if change != "deactivate":
+            assert (
+                await client.post(recovery_url, json={"email": email})
+            ).status_code == 200
+            assert await process_next_email()
+            send.assert_called_once()
+
+
 async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],

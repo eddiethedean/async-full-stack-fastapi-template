@@ -186,11 +186,13 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE FUNCTION cancel_recovery_on_account_email_change() RETURNS trigger
+        CREATE FUNCTION cancel_invalidated_account_recovery() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
             UPDATE email_outbox
-            SET failed_at = now(), last_error = 'account_email_changed',
+            SET failed_at = now(),
+                last_error = CASE WHEN OLD.email IS DISTINCT FROM NEW.email
+                    THEN 'account_email_changed' ELSE 'account_credentials_changed' END,
                 payload = NULL, key_version = NULL,
                 lease_id = NULL, lease_expires_at = NULL
             WHERE kind = 'password_reset'
@@ -203,17 +205,20 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        CREATE TRIGGER cancel_recovery_on_account_email_change
-        AFTER UPDATE OF email ON "user"
-        FOR EACH ROW WHEN (OLD.email IS DISTINCT FROM NEW.email)
-        EXECUTE FUNCTION cancel_recovery_on_account_email_change()
+        CREATE TRIGGER cancel_invalidated_account_recovery
+        AFTER UPDATE OF email, auth_version ON "user"
+        FOR EACH ROW WHEN (
+            OLD.email IS DISTINCT FROM NEW.email
+            OR OLD.auth_version IS DISTINCT FROM NEW.auth_version
+        )
+        EXECUTE FUNCTION cancel_invalidated_account_recovery()
         """
     )
 
 
 def downgrade() -> None:
-    op.execute('DROP TRIGGER cancel_recovery_on_account_email_change ON "user"')
-    op.execute("DROP FUNCTION cancel_recovery_on_account_email_change()")
+    op.execute('DROP TRIGGER cancel_invalidated_account_recovery ON "user"')
+    op.execute("DROP FUNCTION cancel_invalidated_account_recovery()")
     op.execute('DROP TRIGGER cancel_deleted_account_email ON "user"')
     op.execute("DROP FUNCTION cancel_deleted_account_email()")
 
