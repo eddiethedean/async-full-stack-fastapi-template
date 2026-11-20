@@ -40,6 +40,27 @@ jobs:
           printf '::add-mask::%s\n' "$keys"
           printf 'EMAIL_OUTBOX_KEYS=%s\n' "$keys" >> "$GITHUB_ENV"
       - run: docker compose build backend
+      - name: Verify development Compose account email links
+        run: |
+          compose=(docker compose --project-name "${COMPOSE_PROJECT_NAME}-dev-links" -f compose.yml -f compose.override.yml)
+          trap '"${compose[@]}" down --volumes --remove-orphans' EXIT
+          for service in backend email-worker; do
+            "${compose[@]}" run -T --rm --no-deps --pull never "$service" python - <<'PYTHON'
+          from app.core.config import settings
+          from app.utils import (
+              generate_invitation_email,
+              generate_new_account_email,
+              generate_reset_password_email,
+          )
+
+          origin = "http://localhost:8000"
+          email = "recipient@example.com"
+          assert settings.FRONTEND_HOST == origin
+          assert f'href="{origin}/login"' in generate_new_account_email(email).html_content
+          assert f'href="{origin}/reset-password?invite=true' in generate_invitation_email(email, "fixture").html_content
+          assert f'href="{origin}/reset-password?token=fixture"' in generate_reset_password_email(email, email, "fixture").html_content
+          PYTHON
+          done
       - name: Verify the manual deployment without mail
         run: |
           unset SMTP_HOST SMTP_PORT SMTP_TLS SMTP_SSL SMTP_USER SMTP_PASSWORD EMAILS_FROM_EMAIL EMAIL_OUTBOX_KEYS
