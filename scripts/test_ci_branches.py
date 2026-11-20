@@ -117,6 +117,76 @@ def check_exact_comparison() -> None:
                 assert output.read_text() == f"matches={str(matches).lower()}\n", ref
 
 
+def check_coverage_availability() -> None:
+    steps = read_workflow("smokeshow")["jobs"]["smokeshow"]["steps"]
+    lookup, *publish = steps
+    assert lookup["id"] == "coverage"
+    assert lookup["env"]["BACKEND_RUN_ID"] == "${{ github.event.workflow_run.id }}"
+    assert all(
+        step["if"] == "steps.coverage.outputs.artifact-id != ''" for step in publish
+    )
+    download = next(
+        step
+        for step in publish
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert (
+        download["with"]["artifact-ids"] == "${{ steps.coverage.outputs.artifact-id }}"
+    )
+    assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+
+    with TemporaryDirectory() as directory:
+        gh = Path(directory) / "gh"
+        gh.write_text(
+            """#!/usr/bin/env bash
+set -eu
+test "$*" = 'api --paginate --method GET repos/fixture/starter/actions/runs/87/artifacts -f name=coverage-html'
+test "$MOCK_RESPONSE" != 'api-error'
+printf '%s\n' "$MOCK_RESPONSE"
+"""
+        )
+        gh.chmod(0o700)
+        output = Path(directory) / "output"
+        env = {
+            "PATH": os.pathsep.join((directory, os.environ.get("PATH", os.defpath))),
+            "GH_TOKEN": "fixture",
+            "GITHUB_REPOSITORY": "fixture/starter",
+            "BACKEND_RUN_ID": "87",
+            "GITHUB_OUTPUT": str(output),
+        }
+        command = ["bash", "-e", "-o", "pipefail", "-c", lookup["run"]]
+        for pages, artifact_id in (
+            ([{"artifacts": []}], ""),
+            (
+                [{"artifacts": [{"name": "coverage-html", "id": 11, "expired": True}]}],
+                "",
+            ),
+            (
+                [
+                    {"artifacts": [{"name": "other", "id": 31, "expired": False}]},
+                    {
+                        "artifacts": [
+                            {"name": "coverage-html", "id": 27, "expired": False}
+                        ]
+                    },
+                ],
+                "27",
+            ),
+        ):
+            output.unlink(missing_ok=True)
+            subprocess.run(
+                command,
+                env={**env, "MOCK_RESPONSE": "\n".join(map(json.dumps, pages))},
+                check=True,
+            )
+            assert output.read_text() == f"artifact-id={artifact_id}\n"
+        output.unlink()
+        result = subprocess.run(
+            command, env={**env, "MOCK_RESPONSE": "api-error"}, check=False
+        )
+        assert result.returncode and not output.exists()
+
+
 # Serve only workflow metadata, the run list and cancellation responses. Any
 # unexpected request fails locally instead of falling through to the real API.
 MOCK_GH = """#!/usr/bin/env python3
@@ -267,3 +337,4 @@ if __name__ == "__main__":
     check_workflow_gates()
     check_exact_comparison()
     check_monotonic_cancellation()
+    check_coverage_availability()
