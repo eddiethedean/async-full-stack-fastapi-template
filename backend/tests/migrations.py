@@ -7,8 +7,11 @@ from collections.abc import Callable
 from time import monotonic, sleep
 from uuid import UUID, uuid4
 
+import pytest
 from httpx import ASGITransport, AsyncClient
+from psycopg.errors import NotNullViolation
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from tests.database import test_database_url
@@ -300,12 +303,13 @@ def verify_populated_upgrade() -> None:
     asyncio.run(verify_upgraded_application())
 
 
-def verify_uuid_downgrade() -> None:
+def verify_uuid_migrations() -> None:
     from sqlalchemy.engine import make_url
 
     database_url = test_database_url()
     integer_revision = "9c0a54914c78"
     uuid_revision = "d98dd8ec85a3"
+    cascade_revision = "1a31ce608336"
     ownerless_item_id = UUID("00000000-0000-4000-8000-000000000003")
     migration_env = {
         **os.environ,
@@ -345,13 +349,28 @@ def verify_uuid_downgrade() -> None:
             conn.execute(insert_item, {"title": "Before UUIDs", "owner": owner})
 
         migrate("upgrade", uuid_revision)
+        insert_ownerless_item = text(
+            "INSERT INTO item (id, title) VALUES (:id, 'Ownerless UUID item')"
+        )
+        with pytest.raises(IntegrityError) as missing_owner, engine.begin() as conn:
+            conn.execute(insert_ownerless_item, {"id": ownerless_item_id})
+        assert isinstance(missing_owner.value.orig, NotNullViolation)
+
+        # Simulate a database left on the original, nullable UUID revision.
         with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO item (id, title) VALUES (:id, 'Ownerless UUID item')"
-                ),
-                {"id": ownerless_item_id},
-            )
+            conn.execute(text("ALTER TABLE item ALTER COLUMN owner_id DROP NOT NULL"))
+            conn.execute(insert_ownerless_item, {"id": ownerless_item_id})
+
+        failed_upgrade = subprocess.run(
+            ["alembic", "upgrade", cascade_revision],
+            env=migration_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert failed_upgrade.returncode != 0
+        assert f"Item {ownerless_item_id} has no owner" in failed_upgrade.stderr
+        assert "Assign a verified owner before retrying" in failed_upgrade.stderr
 
         failed = subprocess.run(
             ["alembic", "downgrade", integer_revision],
@@ -385,6 +404,12 @@ def verify_uuid_downgrade() -> None:
                 {"email": email, "id": ownerless_item_id},
             )
 
+        migrate("upgrade", cascade_revision)
+        migrate("downgrade", uuid_revision)
+        with pytest.raises(IntegrityError) as missing_owner, engine.begin() as conn:
+            conn.execute(insert_ownerless_item, {"id": uuid4()})
+        assert isinstance(missing_owner.value.orig, NotNullViolation)
+
         migrate("downgrade", integer_revision)
         with engine.begin() as conn:
             assert conn.execute(columns).all() == original_columns
@@ -416,5 +441,5 @@ def verify_uuid_downgrade() -> None:
 
 
 if __name__ == "__main__":
-    verify_uuid_downgrade()
+    verify_uuid_migrations()
     verify_populated_upgrade()

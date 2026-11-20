@@ -39,7 +39,7 @@ def upgrade():
     # Drop old columns and rename new columns
     op.drop_constraint('item_owner_id_fkey', 'item', type_='foreignkey')
     op.drop_column('item', 'owner_id')
-    op.alter_column('item', 'new_owner_id', new_column_name='owner_id')
+    op.alter_column('item', 'new_owner_id', new_column_name='owner_id', nullable=False)
 
     op.drop_column('user', 'id')
     op.alter_column('user', 'new_id', new_column_name='id')
@@ -72,7 +72,7 @@ def downgrade():
                 RAISE EXCEPTION USING
                     MESSAGE = 'Revision d98dd8ec85a3 cannot restore required ownership. Item '
                         || ownerless_item || ' has no owner.',
-                    HINT = 'Assign a verified owner before retrying. See deployment.md under Item ownership on UUID downgrade.';
+                    HINT = 'Assign a verified owner before retrying. See deployment.md under Item ownership during UUID migrations.';
             END IF;
         END
         $$;
