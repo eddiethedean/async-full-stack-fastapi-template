@@ -1,4 +1,4 @@
-"""Verify CI branch gates, run cancellation, and report upload requirements."""
+"""Verify CI branch gates, deployment secret scope, and report handling."""
 
 import json
 import os
@@ -17,6 +17,33 @@ SHARED_WORKFLOW = "$/.github/workflows/check-push-branch.yml"
 
 def read_workflow(name: str) -> dict:
     return load((WORKFLOWS / f"{name}.yml").read_text(), Loader=BaseLoader)
+
+
+def check_deploy_secret_scope() -> None:
+    deploy = read_workflow("deploy-docker-compose")["jobs"]["deploy"]
+    assert all("secrets." not in value for value in deploy["env"].values())
+
+    required = {"SECRET_KEY", "FIRST_SUPERUSER_PASSWORD", "POSTGRES_PASSWORD"}
+    expected = {
+        "Start database": {"POSTGRES_PASSWORD"},
+        "Stop the previous email worker and migrate": required | {"EMAIL_OUTBOX_KEYS"},
+        "Start application": required | {"SMTP_PASSWORD", "EMAIL_OUTBOX_KEYS"},
+    }
+    step_envs = {step["name"]: step.get("env", {}) for step in deploy["steps"]}
+    assert expected.keys() <= step_envs.keys()
+    for step, env in step_envs.items():
+        assert {key: value for key, value in env.items() if "secrets." in value} == {
+            key: f"${{{{ secrets.{key} }}}}" for key in expected.get(step, ())
+        }, step
+
+    for step in ("Build", "Pull supporting service images", "Start database"):
+        env = step_envs[step]
+        for key in required - expected.get(step, set()):
+            assert env[key] == "changethis", (step, key)
+        assert env["SMTP_PASSWORD"] == env["EMAIL_OUTBOX_KEYS"] == "", step
+    assert (
+        step_envs["Stop the previous email worker and migrate"]["SMTP_PASSWORD"] == ""
+    )
 
 
 def check_draft_release_gate() -> None:
@@ -46,25 +73,17 @@ def check_workflow_gates() -> None:
         ("test-backend", "test-backend", True),
         ("test-docker-compose", "test-docker-compose", True),
         ("zizmor", "zizmor", False),
-        ("smokeshow", "smokeshow", False),
     ):
         # The API-only recipe removes both the frontend and its workflow.
         if workflow == "playwright" and not has_browser:
             continue
         config = read_workflow(workflow)
         jobs = config["jobs"]
-        event = "github.event_name"
         pushed_ref = "${{ github.event.ref }}"
         if workflow in {"dependency-audit", "playwright"}:
             pushed_ref = (
                 "${{ github.event_name == 'push' && github.event.ref || github.ref }}"
             )
-        if workflow == "smokeshow":
-            event = "github.event.workflow_run.event"
-            pushed_ref = (
-                "${{ format('refs/heads/{0}', github.event.workflow_run.head_branch) }}"
-            )
-
         if cancels:
             isolate_run = "github.event_name == 'push'"
             if workflow in {"dependency-audit", "playwright"}:
@@ -100,7 +119,7 @@ def check_workflow_gates() -> None:
         assert jobs[PUSH_GATE]["with"]["pushed-ref"] == pushed_ref, workflow
         assert jobs[job]["needs"] == PUSH_GATE, workflow
         assert jobs[job]["if"] == (
-            f"${{{{ !cancelled() && ({event} != 'push' || "
+            "${{ !cancelled() && (github.event_name != 'push' || "
             f"needs.{PUSH_GATE}.outputs.matches == 'true') }}}}"
         ), workflow
 
@@ -208,11 +227,39 @@ def check_report_uploads() -> None:
     )
 
 
+def check_coverage_publishing_scope() -> None:
+    backend = read_workflow("test-backend")
+    assert "pull_request" in backend["on"]
+    assert backend["permissions"] == {"contents": "read"}
+    jobs = backend["jobs"]
+    producer = jobs["test-backend"]
+    coverage_check = next(
+        step for step in producer["steps"] if step.get("name") == "Coverage report"
+    )
+    assert "if" not in coverage_check
+    assert coverage_check["run"] == "uv run coverage report --fail-under=90"
+    publisher = jobs.get("publish-coverage")
+    assert publisher is not None, "Coverage publishing must use the trusted backend run"
+    assert publisher["needs"] == [PUSH_GATE, "test-backend"]
+    assert publisher["if"] == (
+        "github.event_name == 'push' && "
+        "needs.check-push-branch.outputs.matches == 'true' && "
+        "needs.test-backend.result == 'success'"
+    )
+    assert publisher["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "statuses": "write",
+    }
+    assert "permissions" not in producer
+    assert not (WORKFLOWS / "smokeshow.yml").exists()
+
+
 def check_coverage_availability() -> None:
-    steps = read_workflow("smokeshow")["jobs"]["smokeshow"]["steps"]
+    steps = read_workflow("test-backend")["jobs"]["publish-coverage"]["steps"]
     lookup, *publish = steps
     assert lookup["id"] == "coverage"
-    assert lookup["env"]["BACKEND_RUN_ID"] == "${{ github.event.workflow_run.id }}"
+    assert lookup["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert all(
         step["if"] == "steps.coverage.outputs.artifact-id != ''" for step in publish
     )
@@ -224,7 +271,9 @@ def check_coverage_availability() -> None:
     assert (
         download["with"]["artifact-ids"] == "${{ steps.coverage.outputs.artifact-id }}"
     )
-    assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+    assert download["with"]["run-id"] == "${{ github.run_id }}"
+    upload = next(step for step in publish if "smokeshow upload" in step.get("run", ""))
+    assert upload["env"]["SMOKESHOW_GITHUB_PR_HEAD_SHA"] == "${{ github.sha }}"
 
     with TemporaryDirectory() as directory:
         gh = Path(directory) / "gh"
@@ -242,7 +291,7 @@ printf '%s\n' "$MOCK_RESPONSE"
             "PATH": os.pathsep.join((directory, os.environ.get("PATH", os.defpath))),
             "GH_TOKEN": "fixture",
             "GITHUB_REPOSITORY": "fixture/starter",
-            "BACKEND_RUN_ID": "87",
+            "GITHUB_RUN_ID": "87",
             "GITHUB_OUTPUT": str(output),
         }
         command = ["bash", "-e", "-o", "pipefail", "-c", lookup["run"]]
@@ -530,11 +579,13 @@ def check_monotonic_cancellation() -> None:
 
 
 if __name__ == "__main__":
+    check_deploy_secret_scope()
     check_draft_release_gate()
     check_workflow_gates()
     check_playwright_report_extraction()
     check_exact_comparison()
     check_monotonic_cancellation()
     check_report_uploads()
+    check_coverage_publishing_scope()
     check_coverage_availability()
     check_playwright_report_availability()

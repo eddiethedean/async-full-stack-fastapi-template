@@ -142,7 +142,11 @@ in repository settings. Pull request checks run independently of the default bra
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
-To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokeshow), add `SMOKESHOW_AUTH_KEY` as a repository secret.
+To publish coverage from successful default-branch pushes with
+[Smokeshow](https://github.com/samuelcolvin/smokeshow), add
+`SMOKESHOW_AUTH_KEY` as a repository secret. Pull requests can download the
+`coverage-html` artifact from the Test Backend run. The backend coverage check
+still requires at least 90% on pull requests.
 
 ## Account email delivery
 
