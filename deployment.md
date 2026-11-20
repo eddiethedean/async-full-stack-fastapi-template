@@ -112,7 +112,25 @@ before restoring production data.
 
 ## GitHub Repository Automation
 
-The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
+The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**.
+
+The project changelog starts at `0.1.0`. To start from a different version,
+edit the first numbered heading in `release-notes.md` using the
+`## X.Y.Z (YYYY-MM-DD)` format. Add project changes under **Latest Changes**
+and run **Prepare Release** with the desired bump. After the release pull
+request merges into the default branch, **Create Draft Release** uses that
+merge commit and its release notes. The archived template notes are separate
+from this process.
+
+To preview a patch bump without editing the active changelog:
+
+```bash
+preview_notes=$(mktemp)
+cp release-notes.md "$preview_notes"
+uv run python scripts/prepare_release.py prepare patch --release-notes-file "$preview_notes"
+uv run python scripts/prepare_release.py release-notes --release-notes-file "$preview_notes"
+rm "$preview_notes"
+```
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 

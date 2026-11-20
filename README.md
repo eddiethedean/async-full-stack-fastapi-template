@@ -115,7 +115,8 @@ This includes the local FastAPI and Vite workflow, Docker Compose services, `.en
 
 ## Release Notes
 
-See [release-notes.md](./release-notes.md), which includes the history inherited from the original template.
+See [project release notes](./release-notes.md) for changes in this project.
+The [archived template release notes](./template-release-notes.md) preserve the upstream history and contributors.
 
 ## License
 
