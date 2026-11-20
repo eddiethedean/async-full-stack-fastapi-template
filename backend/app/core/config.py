@@ -1,6 +1,6 @@
 import warnings
 from typing import Literal, Self
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import (
@@ -65,12 +65,37 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
+    COMPOSE_POSTGRES_PASSWORD: SecretStr | None = Field(
+        default=None, exclude=True, repr=False
+    )
     DATABASE_URL: PostgresDsn
     DB_POOL_SIZE: int = Field(default=5, ge=1, le=100)
     DB_MAX_OVERFLOW: int = Field(default=2, ge=0, le=100)
     DB_POOL_TIMEOUT_SECONDS: float = Field(default=5, gt=0, le=60)
     DB_READINESS_TIMEOUT_SECONDS: float = Field(default=1, gt=0, le=10)
     MAX_REQUEST_BODY_BYTES: int = Field(default=262_144, ge=1024)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _build_compose_database_url(cls, data: object) -> object:
+        if not isinstance(data, dict) or "DATABASE_URL" in data:
+            return data
+        password = data.get("COMPOSE_POSTGRES_PASSWORD")
+        if isinstance(password, SecretStr):
+            password = password.get_secret_value()
+        if isinstance(password, str) and password:
+            return {
+                **data,
+                "DATABASE_URL": PostgresDsn.build(
+                    scheme="postgresql+psycopg",
+                    username="postgres",
+                    password=quote(password, safe=""),
+                    host="db",
+                    port=5432,
+                    path="app",
+                ),
+            }
+        return data
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
