@@ -58,6 +58,8 @@ def test_explicit_database_url_takes_precedence(
         ("postgres:%2563hangethis@db/app", False),
         ("postgres:other@db/app?password=%63hangethis", True),
         ("postgres:other@db/app?password=%2563hangethis", False),
+        ("postgres:%63hangethis@db/app?password=effective-password", False),
+        ("postgres:%63hangethis@db/app?password=", True),
     ],
 )
 def test_production_checks_the_decoded_database_password(
