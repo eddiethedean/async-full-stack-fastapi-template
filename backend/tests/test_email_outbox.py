@@ -149,20 +149,23 @@ async def test_account_deletion_cancels_queued_email(
             assert job.lease_id is None and job.lease_expires_at is None
 
 
-@pytest.mark.parametrize("claimed_before_deactivation", [False, True])
-async def test_deactivation_cancels_pending_welcome(
+@pytest.mark.parametrize("claimed_before_change", [False, True])
+@pytest.mark.parametrize("change", ["deactivate", "email"])
+async def test_account_change_cancels_pending_welcome(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
-    claimed_before_deactivation: bool,
+    claimed_before_change: bool,
+    change: str,
 ) -> None:
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
     prefix = settings.API_V1_STR
+    email = random_email()
     created = await client.post(
         f"{prefix}/users/",
         headers=superuser_token_headers,
-        json={"email": random_email(), "password": random_lower_string()},
+        json={"email": email, "password": random_lower_string()},
     )
     assert created.status_code == 200
     user_id = created.json()["id"]
@@ -171,36 +174,40 @@ async def test_deactivation_cancels_pending_welcome(
         assert str(job.user_id) == user_id and job.kind == "welcome"
         assert job.failed_at is None
 
-    async def deactivate() -> None:
+    if change == "deactivate":
+        update, reason = {"is_active": False}, "account_deactivated"
+    else:
+        update, reason = {"email": random_email()}, "account_email_changed"
+
+    async def update_account() -> None:
         result = await client.patch(
             f"{prefix}/users/{user_id}",
             headers=superuser_token_headers,
-            json={"is_active": False},
+            json=update,
         )
         assert result.status_code == 200
 
-    async def deactivate_before_send(
+    async def update_before_send(
         session: AsyncSession,
         claimed: ClaimedEmail,
         on_progress: Callable[[], None] | None,
     ) -> bool:
-        await deactivate()
+        await update_account()
         return await deliver_with_lease(session, claimed, on_progress)
 
     with patch.object(email_worker, "send_email") as send:
-        if claimed_before_deactivation:
-            monkeypatch.setattr(
-                email_worker, "deliver_with_lease", deactivate_before_send
-            )
+        if claimed_before_change:
+            monkeypatch.setattr(email_worker, "deliver_with_lease", update_before_send)
             assert await process_next_email()
         else:
-            await deactivate()
-        send.assert_not_called()
+            await update_account()
         assert not await process_next_email()
+        send.assert_not_called()
 
     async with create_session() as session:
         job = (await session.exec(select(EmailOutbox))).one()
-        assert job.failed_at is not None and job.last_error == "account_deactivated"
+        assert job.recipient == email
+        assert job.failed_at is not None and job.last_error == reason
         assert job.delivered_at is None
         assert job.payload is None and job.key_version is None
         assert job.lease_id is None and job.lease_expires_at is None
