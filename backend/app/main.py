@@ -5,11 +5,11 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import sentry_sdk
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.main import api_router
 from app.core.access_logs import (
@@ -85,20 +85,32 @@ async def handle_duplicate_email(
     )
 
 
-async def reject_api_frontend_fallback(request: Request) -> None:
-    path = request.scope["path"]
-    root_path = request.scope.get("root_path", "")
-    if root_path and (path == root_path or path.startswith(f"{root_path}/")):
-        path = path.removeprefix(root_path)
-
+def create_frontend_fallback(default: ASGIApp) -> ASGIApp:
+    frontend_router = APIRouter()
+    frontend_router.frontend("/", directory=FRONTEND_DIR)
     api_prefix = settings.API_V1_STR
-    if api_prefix and (path == api_prefix or path.startswith(f"{api_prefix}/")):
-        raise HTTPException(status_code=404, detail="Not Found")
+
+    async def fallback(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await default(scope, receive, send)
+            return
+
+        path = scope["path"]
+        root_path = scope.get("root_path", "")
+        if root_path and (path == root_path or path.startswith(f"{root_path}/")):
+            path = path.removeprefix(root_path)
+
+        if api_prefix and (path == api_prefix or path.startswith(f"{api_prefix}/")):
+            await default(scope, receive, send)
+            return
+
+        await frontend_router(scope, receive, send)
+
+    return fallback
 
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 # Preserve FastAPI's startup check outside its development mode.
 if os.getenv("FASTAPI_ENV") != "development" or FRONTEND_DIR.is_dir():
-    frontend_router = APIRouter(dependencies=[Depends(reject_api_frontend_fallback)])
-    frontend_router.frontend("/", directory=FRONTEND_DIR)
-    app.include_router(frontend_router)
+    # Let API routes, method errors, and slash redirects take precedence.
+    app.router.default = create_frontend_fallback(app.router.default)
