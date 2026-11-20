@@ -278,6 +278,46 @@ printf '%s\n' "$MOCK_RESPONSE"
         assert result.returncode and not output.exists()
 
 
+def check_playwright_report_availability() -> None:
+    if not (WORKFLOWS / "playwright.yml").is_file():
+        return  # The API-only recipe removes the browser workflow.
+    steps = read_workflow("playwright")["jobs"]["merge-playwright-reports"]["steps"]
+    check = next((step for step in steps if step.get("id") == "blob-reports"), None)
+    assert check is not None, "Playwright must check for blob reports before merging"
+    assert check["env"]["SHARD_RESULT"] == "${{ needs.test-playwright.result }}"
+    for name in ("Merge into HTML Report", "Upload HTML report"):
+        step = next(step for step in steps if step.get("name") == name)
+        assert steps.index(step) > steps.index(check)
+        assert step["if"] == "steps.blob-reports.outputs.available == 'true'"
+
+    for shard_result, files, exit_code, output in (
+        ("failure", (), 0, ""),
+        ("failure", ("note.txt",), 0, ""),
+        ("failure", ("report-1.zip",), 0, "available=true\n"),
+        ("success", ("report-1.zip", "report-2.zip"), 0, "available=true\n"),
+        ("success", (), 1, ""),
+    ):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "frontend/all-blob-reports"
+            if files:
+                reports.mkdir(parents=True)
+                for filename in files:
+                    (reports / filename).touch()
+            github_output = root / "output"
+            github_output.touch()
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", check["run"]],
+                cwd=root,
+                env={"GITHUB_OUTPUT": str(github_output), "SHARD_RESULT": shard_result},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == exit_code, result
+            assert github_output.read_text() == output, result
+
+
 # Serve only workflow metadata, the run list and cancellation responses. Any
 # unexpected request fails locally instead of falling through to the real API.
 MOCK_GH = """#!/usr/bin/env python3
@@ -497,3 +537,4 @@ if __name__ == "__main__":
     check_monotonic_cancellation()
     check_report_uploads()
     check_coverage_availability()
+    check_playwright_report_availability()

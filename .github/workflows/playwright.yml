@@ -167,10 +167,28 @@ jobs:
             unzip -oqj "$archive" '*.zip' -d frontend/all-blob-reports
           fi
         done
+    - name: Check for downloaded blob reports
+      id: blob-reports
+      shell: bash
+      env:
+        SHARD_RESULT: ${{ needs.test-playwright.result }}
+      run: |
+        shopt -s nullglob
+        reports=(frontend/all-blob-reports/*.zip)
+        if (( ${#reports[@]} > 0 )); then
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+        elif [[ "$SHARD_RESULT" == 'failure' ]]; then
+          echo 'No Playwright blob reports to merge after shard failures.'
+        else
+          echo '::error::No Playwright blob reports were downloaded.'
+          exit 1
+        fi
     - name: Merge into HTML Report
+      if: steps.blob-reports.outputs.available == 'true'
       run: bunx playwright merge-reports --reporter html ./all-blob-reports
       working-directory: frontend
     - name: Upload HTML report
+      if: steps.blob-reports.outputs.available == 'true'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: html-report--attempt-${{ github.run_attempt }}
