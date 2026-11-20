@@ -1,6 +1,9 @@
-"""Check CI branch isolation and execute the shared workflow's ref comparison."""
+"""Exercise the exact branch gate and verify safe CI run cancellation."""
 
+import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -13,16 +16,6 @@ SHARED_WORKFLOW = "$/.github/workflows/check-push-branch.yml"
 
 def read_workflow(name: str) -> dict:
     return load((WORKFLOWS / f"{name}.yml").read_text(), Loader=BaseLoader)
-
-
-def check_job_group(job: dict, name: str) -> None:
-    assert job["concurrency"] == {
-        "group": (
-            f"${{{{ github.workflow }}}}-{name}-"
-            "${{ needs.check-push-branch.outputs.matches == 'true' && github.ref || github.run_id }}"
-        ),
-        "cancel-in-progress": "true",
-    }, name
 
 
 def check_workflow_gates() -> None:
@@ -58,12 +51,17 @@ def check_workflow_gates() -> None:
 
         if cancels:
             # Workflow-level groups cannot compare ref names case-sensitively.
-            # Give each unchecked push its own group before the gated job joins a ref group.
+            # Only an admitted run can cancel an older run on its exact ref.
             assert config["concurrency"] == {
                 "group": "${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}",
                 "cancel-in-progress": "true",
             }, workflow
-            check_job_group(jobs[job], job)
+            assert jobs[PUSH_GATE]["permissions"] == {"actions": "write"}, workflow
+            assert jobs[PUSH_GATE]["with"]["cancel-older"] == "true", workflow
+            assert all("concurrency" not in item for item in jobs.values()), workflow
+        else:
+            assert "permissions" not in jobs[PUSH_GATE], workflow
+            assert "cancel-older" not in jobs[PUSH_GATE]["with"], workflow
 
         assert jobs[PUSH_GATE]["uses"] == SHARED_WORKFLOW, workflow
         if workflow in {"dependency-audit", "playwright"}:
@@ -74,14 +72,6 @@ def check_workflow_gates() -> None:
             f"${{{{ !cancelled() && ({event} != 'push' || "
             f"needs.{PUSH_GATE}.outputs.matches == 'true') }}}}"
         ), workflow
-
-        if workflow == "playwright":
-            check_job_group(
-                jobs["test-playwright"], "test-playwright-${{ matrix.shardIndex }}"
-            )
-            check_job_group(
-                jobs["merge-playwright-reports"], "merge-playwright-reports"
-            )
 
 
 def check_exact_comparison() -> None:
@@ -112,6 +102,152 @@ def check_exact_comparison() -> None:
                 assert output.read_text() == f"matches={str(matches).lower()}\n", ref
 
 
+# Serve only workflow metadata, the run list and cancellation responses. Any
+# unexpected request fails locally instead of falling through to the real API.
+MOCK_GH = """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+assert args[0] == "api", args
+endpoint = next(arg.lstrip("/") for arg in args if arg.lstrip("/").startswith("repos/"))
+prefix = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/"
+assert endpoint.startswith(prefix), endpoint
+endpoint = endpoint.removeprefix(prefix)
+if endpoint == f"runs/{os.environ['GITHUB_RUN_ID']}" and ".workflow_id" in args:
+    print(101)
+elif endpoint.startswith("workflows/101/runs"):
+    status = next(arg.removeprefix("status=") for arg in args if arg.startswith("status="))
+    if status == os.environ.get("MOCK_QUERY_FAILURE"):
+        sys.exit(1)
+    assert f"branch={os.environ['PUSH_REF'].removeprefix('refs/heads/')}" in args, args
+    runs = json.loads(os.environ["MOCK_RUNS"])
+    print(json.dumps({"workflow_runs": [run for run in runs if run["status"] == status]}))
+elif endpoint.endswith("/cancel"):
+    assert "POST" in args, args
+    run_id = endpoint.split("/")[1]
+    with open(os.environ["MOCK_CANCEL_LOG"], "a") as log:
+        print(run_id, file=log)
+    if run_id == os.environ.get("MOCK_CANCEL_FAILURE"):
+        sys.exit(1)
+elif endpoint == f"runs/{os.environ.get('MOCK_CANCEL_FAILURE')}" and ".status" in args:
+    print(os.environ["MOCK_STATUS_AFTER_FAILURE"])
+else:
+    raise AssertionError(args)
+"""
+
+
+def check_monotonic_cancellation() -> None:
+    gate = read_workflow(PUSH_GATE)
+    opt_in = gate["on"]["workflow_call"]["inputs"]["cancel-older"]
+    assert opt_in["type"] == "boolean"
+    assert opt_in["default"] == "false"
+    cancel = next(
+        step
+        for step in gate["jobs"]["check"]["steps"]
+        if "inputs.cancel-older" in step.get("if", "")
+    )
+    assert "steps.compare.outputs.matches == 'true'" in cancel["if"]
+    assert cancel["env"]["PUSH_REF"] == "${{ inputs.pushed-ref }}"
+    assert cancel["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+    repo = {"id": 33, "full_name": "fixture/starter"}
+    branch = "trunk/main"
+
+    def run(run_id: int, number: int, **overrides: object) -> dict:
+        return {
+            "id": run_id,
+            "run_number": number,
+            "workflow_id": 101,
+            "head_branch": branch,
+            "head_repository": repo,
+            "event": "push",
+            "status": "in_progress",
+            **overrides,
+        }
+
+    runs = [
+        run(401, 1, status="waiting"),
+        run(402, 2, status="requested"),
+        run(403, 3, status="pending"),
+        run(405, 5, head_branch="trunk/Main"),
+        run(406, 6, workflow_id=102),
+        run(407, 7, head_repository={"id": 34, "full_name": "fixture/fork"}),
+        run(408, 8, event="pull_request"),
+        run(409, 8, event="workflow_dispatch", status="queued"),
+        run(410, 9),
+        run(411, 10),
+        run(412, 4, status="completed"),
+    ]
+
+    with TemporaryDirectory() as directory:
+        bin_dir = Path(directory)
+        gh = bin_dir / "gh"
+        gh.write_text(MOCK_GH)
+        gh.chmod(0o700)
+        log = bin_dir / "cancellations"
+        env = {
+            "PATH": os.pathsep.join(
+                (
+                    directory,
+                    str(Path(sys.executable).parent),
+                    os.environ.get("PATH", os.defpath),
+                )
+            ),
+            "GH_TOKEN": "fixture",
+            "GITHUB_REPOSITORY": repo["full_name"],
+            "GITHUB_REPOSITORY_ID": str(repo["id"]),
+            "GITHUB_EVENT_NAME": "push",
+            "PUSH_REF": f"refs/heads/{branch}",
+            "MOCK_RUNS": json.dumps(runs),
+            "MOCK_CANCEL_LOG": str(log),
+        }
+
+        def execute(
+            run_id: int, number: int, *, succeeds: bool = True, **mock_env: str
+        ) -> list[str]:
+            log.write_text("")
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", cancel["run"]],
+                env={
+                    **env,
+                    "GITHUB_RUN_ID": str(run_id),
+                    "GITHUB_RUN_NUMBER": str(number),
+                    **mock_env,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert (result.returncode == 0) == succeeds, result.stderr
+            return sorted(log.read_text().splitlines())
+
+        # Run 10 reaches its exact-ref gate first. The late gate on run 9 sees
+        # the same list, which deliberately still includes in-flight cancels.
+        older_targets = ["401", "402", "403", "409"]
+        assert execute(411, 10) == [*older_targets, "410"]
+        assert execute(410, 9) == older_targets
+        assert (
+            execute(
+                410, 9, MOCK_CANCEL_FAILURE="409", MOCK_STATUS_AFTER_FAILURE="completed"
+            )
+            == older_targets
+        )
+        assert (
+            execute(
+                410,
+                9,
+                succeeds=False,
+                MOCK_CANCEL_FAILURE="409",
+                MOCK_STATUS_AFTER_FAILURE="in_progress",
+            )
+            == older_targets
+        )
+        assert execute(410, 9, succeeds=False, MOCK_QUERY_FAILURE="queued") == []
+
+
 if __name__ == "__main__":
     check_workflow_gates()
     check_exact_comparison()
+    check_monotonic_cancellation()

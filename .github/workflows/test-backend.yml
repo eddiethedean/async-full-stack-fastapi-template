@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  # Group push jobs only after the exact branch check to avoid case-insensitive ref collisions.
+  # Isolate pushes until the exact-ref gate can cancel only older runs.
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: true
 
@@ -15,15 +15,15 @@ jobs:
   check-push-branch:
     if: github.event_name == 'push' && github.event.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     uses: $/.github/workflows/check-push-branch.yml
+    permissions:
+      actions: write
     with:
+      cancel-older: true
       pushed-ref: ${{ github.event.ref }}
 
   test-backend:
     needs: check-push-branch
     if: ${{ !cancelled() && (github.event_name != 'push' || needs.check-push-branch.outputs.matches == 'true') }}
-    concurrency:
-      group: ${{ github.workflow }}-test-backend-${{ needs.check-push-branch.outputs.matches == 'true' && github.ref || github.run_id }}
-      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
