@@ -8,6 +8,8 @@ RUN bun install --frozen-lockfile
 
 COPY frontend ./frontend
 ARG VITE_API_URL=
+ARG VITE_PROJECT_NAME=
+ARG VITE_PROJECT_URL=
 RUN bun run --filter frontend build
 
 

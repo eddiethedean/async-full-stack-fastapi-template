@@ -9,6 +9,7 @@ import { columns } from "@/components/Items/columns"
 import PendingItems from "@/components/Pending/PendingItems"
 import { privateQueryKey, useSession } from "@/lib/auth"
 import { paginationSearch } from "@/lib/pagination"
+import { projectName } from "@/lib/project"
 
 export const Route = createFileRoute("/_layout/items")({
   component: Items,
@@ -16,7 +17,7 @@ export const Route = createFileRoute("/_layout/items")({
   head: () => ({
     meta: [
       {
-        title: "Items - Async Full Stack FastAPI",
+        title: `Items - ${projectName}`,
       },
     ],
   }),
