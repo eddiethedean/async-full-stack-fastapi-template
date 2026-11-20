@@ -150,6 +150,72 @@ async def test_account_deletion_cancels_queued_email(
             assert job.payload is None and job.key_version is None
 
 
+@pytest.mark.parametrize("claimed_before_change", [False, True])
+async def test_email_change_cancels_queued_recovery(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    claimed_before_change: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    old_email, new_email = random_email(), random_email()
+    prefix = settings.API_V1_STR
+    signup = await client.post(
+        f"{prefix}/users/signup",
+        json={"email": old_email, "password": random_lower_string()},
+    )
+    assert signup.status_code == 200
+    recovery_url = f"{prefix}/password-recovery"
+    assert (
+        await client.post(recovery_url, json={"email": old_email})
+    ).status_code == 200
+
+    async def change_email() -> None:
+        result = await client.patch(
+            f"{prefix}/users/{signup.json()['id']}",
+            headers=superuser_token_headers,
+            json={"email": new_email},
+        )
+        assert result.status_code == 200
+
+    async def change_before_send(
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
+        await change_email()
+        return await deliver_with_lease(session, claimed, on_progress)
+
+    with patch.object(email_worker, "send_email") as send:
+        if claimed_before_change:
+            with monkeypatch.context() as patch_worker:
+                patch_worker.setattr(
+                    email_worker, "deliver_with_lease", change_before_send
+                )
+                assert await process_next_email()
+        else:
+            await change_email()
+        assert not await process_next_email()
+        send.assert_not_called()
+
+        async with create_session() as session:
+            job = (await session.exec(select(EmailOutbox))).one()
+            assert job.recipient == old_email
+            assert (
+                job.failed_at is not None and job.last_error == "account_email_changed"
+            )
+            assert job.delivered_at is None
+            assert job.payload is None and job.key_version is None
+            assert job.lease_id is None and job.lease_expires_at is None
+
+        recovery = await client.post(recovery_url, json={"email": new_email})
+        assert recovery.status_code == 200
+        assert await process_next_email()
+        send.assert_called_once()
+        assert send.call_args.kwargs["email_to"] == new_email
+
+
 async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],
