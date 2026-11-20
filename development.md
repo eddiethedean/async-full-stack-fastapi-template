@@ -103,9 +103,11 @@ stack.
    `packages/react-email/biome.json` to keep the email lint settings
    available without the frontend. Delete `frontend/`, `scripts/generate-client.sh`, and
    `scripts/test-browser.sh`. In `backend/app/main.py`, remove the
-   `if FRONTEND_DIR.is_dir():` block that registers the frontend, the
-   `FRONTEND_DIR` constant, and the `Path` import. Keep the API router
-   registration and two blank lines before `class RuntimeFastAPI`.
+   conditional frontend registration, the `FRONTEND_DIR` constant, and
+   the `os` and `Path` imports. Keep the API router registration and two
+   blank lines before `class RuntimeFastAPI`. In
+   `backend/tests/test_standalone_app.py`, remove
+   `test_production_requires_a_frontend_bundle`.
 2. In `backend/Dockerfile`, remove the `frontend-build` stage and the
    `COPY --from=frontend-build` instruction. Keep both Python stages
    (`production` and `development`). In `compose.override.yml`, remove

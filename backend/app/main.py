@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -85,5 +86,6 @@ async def handle_duplicate_email(
 
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
-if FRONTEND_DIR.is_dir():
+# Preserve FastAPI's startup check outside its development mode.
+if os.getenv("FASTAPI_ENV") != "development" or FRONTEND_DIR.is_dir():
     app.frontend("/", directory=FRONTEND_DIR)
