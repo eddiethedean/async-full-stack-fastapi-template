@@ -775,11 +775,11 @@ async def test_admin_mail_probe_when_email_is_disabled(
     smtp_ssl.assert_not_called()
 
 
-def test_legacy_recovery_access_logs_remove_sensitive_targets() -> None:
+def test_recovery_access_logs_remove_sensitive_targets() -> None:
     for original, expected in (
         (
-            "/api/v1/password-recovery/user@example.com",
-            "/api/v1/password-recovery/{email}",
+            "/api/v1/password-recovery-html-content/user@example.com",
+            "/api/v1/password-recovery-html-content/{email}",
         ),
         ("/reset-password?token=example", "/reset-password"),
     ):

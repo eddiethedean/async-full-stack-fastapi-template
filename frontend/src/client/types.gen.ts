@@ -538,36 +538,6 @@ export type loginRecoverPasswordByEmailResponses = {
 
 export type loginRecoverPasswordByEmailResponse = loginRecoverPasswordByEmailResponses[keyof loginRecoverPasswordByEmailResponses];
 
-export type loginRecoverPasswordData = {
-    body?: never;
-    path: {
-        /**
-         * Email
-         */
-        email: string;
-    };
-    query?: never;
-    url: '/api/v1/password-recovery/{email}';
-};
-
-export type loginRecoverPasswordErrors = {
-    /**
-     * Validation Error
-     */
-    422: HTTPValidationError;
-};
-
-export type loginRecoverPasswordError = loginRecoverPasswordErrors[keyof loginRecoverPasswordErrors];
-
-export type loginRecoverPasswordResponses = {
-    /**
-     * Successful Response
-     */
-    200: Message;
-};
-
-export type loginRecoverPasswordResponse = loginRecoverPasswordResponses[keyof loginRecoverPasswordResponses];
-
 export type loginAcceptInvitationData = {
     body: NewPassword;
     path?: never;

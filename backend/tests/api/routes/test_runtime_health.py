@@ -68,13 +68,13 @@ async def test_request_logs_include_id_but_exclude_email(
     email = "private-log-check@example.com"
     with caplog.at_level(INFO, logger="uvicorn.error"):
         response = await client.post(
-            f"{settings.API_V1_STR}/password-recovery/{email}",
+            f"{settings.API_V1_STR}/password-recovery", json={"email": email}
         )
 
     request_id = response.headers["X-Request-ID"]
     assert request_id in caplog.text
     assert email not in caplog.text
-    assert "password-recovery/{email}" in caplog.text
+    assert "route=/password-recovery " in caplog.text
 
 
 async def test_unhandled_error_has_request_id(
@@ -187,7 +187,7 @@ def test_error_reporting_excludes_sensitive_request_metadata() -> None:
             "request": {"url": "https://example.com/?token=secret"},
             "exception": {"values": [{"type": "ValueError", "value": "sensitive"}]},
             "transaction_info": {"source": "url"},
-            "transaction": "/password-recovery/user@example.com",
+            "transaction": "/reset-password?token=secret",
             "spans": [{"description": "request detail", "data": {"query": "private"}}],
         },
         {},
