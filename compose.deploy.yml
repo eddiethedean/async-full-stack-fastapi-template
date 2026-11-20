@@ -64,7 +64,7 @@ services:
       - traefik.http.routers.backend-https.tls.certresolver=le
 
   email-worker:
-    restart: on-failure
+    restart: unless-stopped
     environment:
       FRONTEND_HOST: https://${DOMAIN:?Variable not set}
 

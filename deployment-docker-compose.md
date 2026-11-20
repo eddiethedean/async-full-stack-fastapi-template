@@ -191,6 +191,9 @@ deployment variables when configuring SMTP. Both services read the same
 settings. See [account email delivery](./deployment.md#account-email-delivery)
 for key setup, rotation, and retry behavior.
 
+The production worker resumes processing queued email after Docker restarts. A
+worker explicitly stopped for maintenance stays stopped until you start it.
+
 The base Compose stack builds the unprivileged production image. The development
 override selects the development image so local test and code tools are
 available. The Compose deployment workflow starts PostgreSQL, runs its
