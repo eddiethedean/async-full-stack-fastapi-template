@@ -129,12 +129,9 @@ delivers a recovery email to Mailpit. Any temporary exception should cite the
 advisory, affected component, owner, justification, and expiration date in a
 repository issue and keep the scanner exception scoped to that advisory.
 
-The [Picomatch exception](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
-belongs to the project maintainer and is tracked in
-[issue #12](https://github.com/eddiethedean/async-full-stack-fastapi-template/issues/12).
-The affected package is used by the frontend build with repository-defined
-patterns. Remove the exception when a fix is available. It expires on
-December 18, 2026.
+Projects generated from this template run the same audits without inherited
+advisory exceptions. Document any temporary exception your own repository
+needs and remove it when it expires or a fix becomes available.
 
 ## Docker Compose Files and Environment Variables
 
