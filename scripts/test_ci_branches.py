@@ -18,6 +18,21 @@ def read_workflow(name: str) -> dict:
     return load((WORKFLOWS / f"{name}.yml").read_text(), Loader=BaseLoader)
 
 
+def check_draft_release_gate() -> None:
+    jobs = read_workflow("create-draft-release")["jobs"]
+    gate = jobs[PUSH_GATE]
+    assert gate["uses"] == SHARED_WORKFLOW
+    assert gate["with"] == {
+        "pushed-ref": "${{ format('refs/heads/{0}', github.event.pull_request.base.ref) }}"
+    }
+    assert "github.event.pull_request.merged == true" in gate["if"]
+    assert "contains(github.event.pull_request.labels.*.name, 'release')" in gate["if"]
+    assert "permissions" not in gate
+    draft = jobs["create-draft-release"]
+    assert draft["needs"] == PUSH_GATE
+    assert draft["if"] == "needs.check-push-branch.outputs.matches == 'true'"
+
+
 def check_workflow_gates() -> None:
     has_browser = (
         Path("frontend/package.json").is_file()
@@ -248,6 +263,7 @@ def check_monotonic_cancellation() -> None:
 
 
 if __name__ == "__main__":
+    check_draft_release_gate()
     check_workflow_gates()
     check_exact_comparison()
     check_monotonic_cancellation()
