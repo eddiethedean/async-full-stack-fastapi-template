@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       cancel-older:
-        description: Cancel older runs on the same branch for default pushes and manual branch runs
+        description: Cancel older runs on the same ref for default branch pushes and manual runs
         type: boolean
         default: false
     outputs:
@@ -45,24 +45,31 @@ jobs:
           runs="repos/$GITHUB_REPOSITORY/actions/runs"
           workflow_id=$(gh api "$runs/$GITHUB_RUN_ID" --jq .workflow_id)
           workflow_runs="repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs"
-          branch=${PUSH_REF#refs/heads/}
+          ref=${PUSH_REF#refs/}
+          ref_name=${ref#*/}
+          ref_type=branch
+          if [[ "$ref" == tags/* ]]; then
+            ref_type=tag
+          fi
 
           # Run numbers increase within the caller workflow. Gate completion
           # order can differ, so never cancel by arrival in a concurrency group.
-          # Manual tag runs can have the same short head_branch. Only manual
-          # branch runs with a matching full ref in the title are identifiable.
+          # The API's head_branch field can contain a short branch or tag name.
+          # A manual run's title identifies its full ref.
           older_runs=$(
             for status in queued in_progress waiting requested pending; do
               gh api --paginate --method GET "$workflow_runs" \
-                -f branch="$branch" -f status="$status" -F per_page=100 |
-                jq -r --arg branch "$branch" --arg ref "$PUSH_REF" --argjson repo "$GITHUB_REPOSITORY_ID" \
-                  --argjson workflow "$workflow_id" --argjson current "$GITHUB_RUN_NUMBER" '
+                -f branch="$ref_name" -f status="$status" -F per_page=100 |
+                jq -r --arg ref_name "$ref_name" --arg ref_type "$ref_type" \
+                  --arg manual_title "Manual $ref_type CI on $PUSH_REF" \
+                  --argjson repo "$GITHUB_REPOSITORY_ID" --argjson workflow "$workflow_id" \
+                  --argjson current "$GITHUB_RUN_NUMBER" '
                   .workflow_runs[]
-                  | select(.head_branch == $branch and .head_repository.id == $repo)
+                  | select(.head_branch == $ref_name and .head_repository.id == $repo)
                   | select(.workflow_id == $workflow)
-                  | select(.event == "push" or (
+                  | select((.event == "push" and $ref_type == "branch") or (
                       .event == "workflow_dispatch"
-                      and .display_title == ("Manual branch CI on " + $ref)
+                      and .display_title == $manual_title
                     ))
                   | select((.run_number | type) == "number" and .run_number < $current)
                   | .id
