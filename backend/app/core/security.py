@@ -1,18 +1,12 @@
 import jwt
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
-from pwdlib.hashers.bcrypt import BcryptHasher
 from pydantic.networks import validate_email
 
 from app.core.config import settings
 from app.models import AuthSession, TokenPayload
 
-password_hash = PasswordHash(
-    (
-        Argon2Hasher(),
-        BcryptHasher(),
-    )
-)
+password_hash = PasswordHash((Argon2Hasher(),))
 
 # Spend Argon2 verification work on known-invalid login attempts.
 DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZmYjE2NzZlZjY0ZWY3ZGRkY2U2OWFjNjk"
@@ -57,13 +51,6 @@ def decode_access_token(token: str) -> TokenPayload:
 def verify_password(
     plain_password: str, hashed_password: str
 ) -> tuple[bool, str | None]:
-    if (
-        BcryptHasher.identify(hashed_password)
-        and len(plain_password.encode("utf-8")) > 72
-    ):
-        # A legacy hash cannot verify the suffix. Recover through a password reset.
-        password_hash.verify(plain_password, DUMMY_HASH)
-        return False, None
     return password_hash.verify_and_update(plain_password, hashed_password)
 
 

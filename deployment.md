@@ -149,13 +149,6 @@ clears the recovery payload. A new recovery request uses the current address.
 If the worker takes the lock first, deletion or the email change waits for
 that attempt to finish.
 
-## Recovering legacy bcrypt accounts
-
-If a legacy bcrypt password exceeds 72 bytes in UTF-8, sign-in returns the
-standard incorrect-credentials response. Use **Forgot your password?** on the
-sign-in page to reset it. If recovery email is disabled, an active superuser
-can set a new password in user administration. The new password uses Argon2.
-
 ## Authentication rate limits
 
 The API counts login (cookie and bearer), signup, and recovery requests in

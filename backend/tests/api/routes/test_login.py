@@ -6,8 +6,7 @@ from uuid import UUID
 
 import jwt
 import pytest
-from httpx import AsyncClient
-from pwdlib.hashers.bcrypt import BcryptHasher
+from httpx import AsyncClient, Response
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -335,28 +334,34 @@ async def test_reset_password_invalid_token(
 
 
 @pytest.mark.parametrize("browser", [False, True], ids=["bearer", "browser"])
-async def test_long_legacy_bcrypt_password_can_be_reset(
+async def test_long_multibyte_argon2_password_signup_login_and_reset(
     client: AsyncClient, db: AsyncSession, browser: bool
 ) -> None:
     password = "🌳" * 19
-    # Historical bcrypt used only the first 72 UTF-8 bytes.
-    legacy_hash = BcryptHasher().hash(password.encode("utf-8")[:72])
-    user = User(email=random_email(), hashed_password=legacy_hash)
-    db.add(user)
-    await db.commit()
     api = settings.API_V1_STR
+    email = random_email()
+    signup = await client.post(
+        f"{api}/users/signup", json={"email": email, "password": password}
+    )
+    assert signup.status_code == 200
+    user = (await db.exec(select(User).where(col(User.email) == email))).one()
+    assert user.hashed_password.startswith("$argon2id$")
+
     path = f"{api}/auth/session" if browser else f"{api}/login/access-token"
-    credentials = {"username": user.email, "password": password}
     headers = {"Origin": settings.auth_origins[0]}
 
-    if browser:
-        response = await client.post(path, json=credentials, headers=headers)
-    else:
-        response = await client.post(path, data=credentials)
+    async def login(candidate: str) -> Response:
+        credentials = {"username": email, "password": candidate}
+        if browser:
+            return await client.post(path, json=credentials, headers=headers)
+        return await client.post(path, data=credentials)
+
+    assert (await login(password)).status_code == 200
+    # A candidate with the same first 72 UTF-8 bytes must still fail.
+    wrong_password = "🌳" * 18 + "🌲"
+    response = await login(wrong_password)
     assert response.status_code == 400
     assert response.json() == {"detail": "Incorrect email or password"}
-    await db.refresh(user)
-    assert user.hashed_password == legacy_hash
 
     with (
         patch.object(settings, "SMTP_HOST", "smtp.example.com"),
@@ -379,51 +384,12 @@ async def test_long_legacy_bcrypt_password_can_be_reset(
     await db.refresh(user)
     assert user.hashed_password.startswith("$argon2")
 
-    credentials["password"] = new_password
+    response = await login(new_password)
+    assert response.status_code == 200
     if browser:
-        login = await client.post(path, json=credentials, headers=headers)
-        assert login.status_code == 200
-        assert login.json()["user"]["email"] == user.email
+        assert response.json()["user"]["email"] == email
     else:
-        login = await client.post(path, data=credentials)
-        assert login.status_code == 200
-        assert login.json()["access_token"]
-
-
-async def test_login_with_bcrypt_password_upgrades_to_argon2(
-    client: AsyncClient, db: AsyncSession
-) -> None:
-    """Test that logging in with a bcrypt password hash upgrades it to argon2."""
-    email = random_email()
-    password = "🌳" * 18  # 72 UTF-8 bytes is still supported for bcrypt.
-
-    # Create a bcrypt hash directly (simulating legacy password)
-    bcrypt_hasher = BcryptHasher()
-    bcrypt_hash = bcrypt_hasher.hash(password)
-    assert bcrypt_hash.startswith("$2")  # bcrypt hashes start with $2
-
-    user = User(email=email, hashed_password=bcrypt_hash, is_active=True)
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-
-    assert user.hashed_password.startswith("$2")
-
-    login_data = {"username": email, "password": password}
-    r = await client.post(f"{settings.API_V1_STR}/login/access-token", data=login_data)
-    assert r.status_code == 200
-    tokens = r.json()
-    assert "access_token" in tokens
-
-    await db.refresh(user)
-
-    # Verify the hash was upgraded to argon2
-    assert user.hashed_password.startswith("$argon2")
-
-    verified, updated_hash = verify_password(password, user.hashed_password)
-    assert verified
-    # Should not need another update since it's already argon2
-    assert updated_hash is None
+        assert response.json()["access_token"]
 
 
 async def test_login_with_argon2_password_keeps_hash(
