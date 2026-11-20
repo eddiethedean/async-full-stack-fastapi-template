@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 
 from yaml import BaseLoader, load
 
@@ -130,6 +131,55 @@ def check_exact_comparison() -> None:
                     check=True,
                 )
                 assert output.read_text() == f"matches={str(matches).lower()}\n", ref
+
+
+def check_playwright_report_extraction() -> None:
+    if not (WORKFLOWS / "playwright.yml").is_file():
+        return  # The API-only recipe removes the browser workflow.
+
+    steps = read_workflow("playwright")["jobs"]["merge-playwright-reports"]["steps"]
+    download = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert download["with"].get("skip-decompress") == "true"
+    assert download["with"]["path"] == "${{ runner.temp }}/playwright-blob-archives"
+    assert download["with"].get("merge-multiple", "false") == "false"
+    assert download["with"].get("digest-mismatch", "error") == "error"
+    extract = next(step for step in steps if step.get("name") == "Extract blob reports")
+    merge = next(step for step in steps if step.get("name") == "Merge into HTML Report")
+    assert steps.index(download) < steps.index(extract) < steps.index(merge)
+
+    for layout in (
+        (),
+        ("artifact",),
+        ("blob-report-1/artifact", "blob-report-2/artifact"),
+    ):
+        with TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            archives = fixture / "playwright-blob-archives"
+            reports = fixture / "frontend" / "all-blob-reports"
+            reports.parent.mkdir()
+            expected = {}
+            for index, archive_name in enumerate(layout, start=1):
+                archive = archives / archive_name
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                report_name = f"report-{index}.zip"
+                data = f"report contents for shard {index}".encode()
+                with ZipFile(archive, "w") as wrapped:
+                    wrapped.writestr(report_name, data)
+                expected[report_name] = data
+
+            subprocess.run(
+                ["bash", "-c", extract["run"]],
+                cwd=fixture,
+                env={**os.environ, "RUNNER_TEMP": directory},
+                check=True,
+            )
+            assert {
+                report.name: report.read_bytes() for report in reports.glob("*")
+            } == expected
 
 
 def check_report_uploads() -> None:
@@ -482,6 +532,7 @@ def check_monotonic_cancellation() -> None:
 if __name__ == "__main__":
     check_draft_release_gate()
     check_workflow_gates()
+    check_playwright_report_extraction()
     check_exact_comparison()
     check_monotonic_cancellation()
     check_report_uploads()
