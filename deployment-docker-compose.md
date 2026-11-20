@@ -4,10 +4,10 @@ You can deploy the project to your own remote server with Docker Compose. The de
 
 ## Preparation
 
-Follow the [release rehearsal](./deployment.md#release-rehearsal) on a separate
-Compose project and database. Use the production Compose files and an explicit
-staging environment file. After migrating the database, validate backend
-readiness and the email worker before promoting the image to production.
+Start with a fresh Compose project and PostgreSQL database. To try the first
+deployment in staging, use a separate Compose project name and an explicit
+staging environment file. Verify backend readiness and email delivery if
+enabled.
 
 * Have a remote server ready and available.
 * Configure DNS records pointing to the server for the application domain and any supporting service subdomains you want to expose, such as `fastapi-project.example.com` and `adminer.fastapi-project.example.com`.
@@ -77,8 +77,12 @@ bash scripts/migrate-compose.sh --env-file /dev/null -f compose.yml -f compose.d
 docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
 ```
 
-To promote the rehearsed image, load it onto the production host, set
-`BACKEND_IMAGE` to its loaded tag, and begin with the scan command.
+The migration command creates the schema and the configured first superuser
+on the first deployment. The final command waits for service health checks.
+Sign in as the first superuser and verify delivery if email is enabled.
+
+To deploy an image already tested in staging, load it onto the production
+host, set `BACKEND_IMAGE` to its tag, and begin with the scan command.
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to
 the shared `compose.yml` configuration. The production commands use the

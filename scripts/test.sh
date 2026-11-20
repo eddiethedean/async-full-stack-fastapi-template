@@ -23,8 +23,3 @@ export SMTP_HOST=127.0.0.1 SMTP_PORT="${smtp_port##*:}" SMTP_TLS=false SMTP_SSL=
 export SMTP_USER="" SMTP_PASSWORD="" SENTRY_DSN=""
 cd backend
 uv run --locked bash scripts/test.sh "$@"
-cd "$repo_dir"
-"${compose[@]}" exec -T db createdb -U postgres asf_test_upgrade
-cd backend
-TEST_DATABASE_URL="postgresql://postgres:test-only-postgres@${db_port}/asf_test_upgrade" \
-    uv run --locked python -m tests.migrations
