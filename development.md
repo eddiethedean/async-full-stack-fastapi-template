@@ -170,6 +170,22 @@ API clients can still use the OAuth2 bearer login. An explicit Authorization hea
 
 Set `FRONTEND_HOST` to the deployed frontend's HTTPS origin. Additional trusted origins for CORS and browser writes can be configured as a JSON list in `AUTH_TRUSTED_ORIGINS`. Production cookies are Secure and host only.
 
+## Optional Editor Agent Skills
+
+After installing the backend dependencies, you can link the FastAPI and
+SQLModel skills bundled with those packages. From the repository root, run:
+
+```bash
+uv sync --locked --project backend
+uvx library-skills install --skill fastapi --skill sqlmodel
+```
+
+The installer discovers the skills in the local Python environment and links
+them under `.agents/skills/`. Add `--claude` to also link them under
+`.claude/skills/`. Run the installer again after moving or recreating your
+Python environment. These links belong to your local checkout and are ignored
+by Git. Application setup and CI do not require this step.
+
 ## Pre-commit Hooks and Code Linting
 
 The project uses [prek](https://prek.j178.dev/), a modern alternative to [pre-commit](https://pre-commit.com/), for code linting and formatting.
