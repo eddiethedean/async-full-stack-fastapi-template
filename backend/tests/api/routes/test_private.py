@@ -3,11 +3,16 @@ from httpx import AsyncClient
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.routes.private import PrivateUserCreate
 from app.core.config import settings
 from app.models import User
 from tests.utils.utils import random_email
 
 pytestmark = pytest.mark.anyio
+
+
+def test_private_fixture_create_schema() -> None:
+    assert set(PrivateUserCreate.model_fields) == {"email", "password", "full_name"}
 
 
 async def test_test_mode_is_excluded_from_openapi(client: AsyncClient) -> None:
@@ -18,6 +23,7 @@ async def test_test_mode_is_excluded_from_openapi(client: AsyncClient) -> None:
 
     schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
     assert path not in schema.json()["paths"]
+    assert f"{settings.API_V1_STR}/private/users/" not in schema.json()["paths"]
 
 
 async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
