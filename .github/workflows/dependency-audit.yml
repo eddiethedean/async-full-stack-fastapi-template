@@ -10,15 +10,15 @@ permissions:
   contents: read
 
 concurrency:
-  # Isolate pushes until the exact-ref gate can cancel only older runs.
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}
+  # Isolate pushes and manual branch runs until the exact-ref gate runs.
+  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/'))) && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   check-push-branch:
     if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (github.event_name == 'push' && github.event.ref || github.ref) == format('refs/heads/{0}', github.event.repository.default_branch)
+      (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/')) ||
+      (github.event_name == 'push' && github.event.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     uses: $/.github/workflows/check-push-branch.yml
     permissions:
       actions: write

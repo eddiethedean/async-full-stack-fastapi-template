@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       cancel-older:
-        description: Cancel older runs after an exact default branch match
+        description: Cancel older runs on the same branch for default pushes and manual branch runs
         type: boolean
         default: false
     outputs:
@@ -36,7 +36,7 @@ jobs:
           fi
           printf 'matches=%s\n' "$matches" >> "$GITHUB_OUTPUT"
       - name: Cancel older runs of this workflow
-        if: inputs.cancel-older && steps.compare.outputs.matches == 'true'
+        if: inputs.cancel-older && (steps.compare.outputs.matches == 'true' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
           PUSH_REF: ${{ inputs.pushed-ref }}

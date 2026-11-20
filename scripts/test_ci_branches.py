@@ -50,10 +50,18 @@ def check_workflow_gates() -> None:
             )
 
         if cancels:
+            isolate_run = "github.event_name == 'push'"
+            if workflow in {"dependency-audit", "playwright"}:
+                isolate_run = (
+                    f"({isolate_run} || (github.event_name == 'workflow_dispatch' "
+                    "&& startsWith(github.ref, 'refs/heads/')))"
+                )
             # Workflow-level groups cannot compare ref names case-sensitively.
             # Only an admitted run can cancel an older run on its exact ref.
             assert config["concurrency"] == {
-                "group": "${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}",
+                "group": "${{ github.workflow }}-${{ "
+                + isolate_run
+                + " && github.run_id || github.ref }}",
                 "cancel-in-progress": "true",
             }, workflow
             assert jobs[PUSH_GATE]["permissions"] == {"actions": "write"}, workflow
@@ -65,7 +73,11 @@ def check_workflow_gates() -> None:
 
         assert jobs[PUSH_GATE]["uses"] == SHARED_WORKFLOW, workflow
         if workflow in {"dependency-audit", "playwright"}:
-            assert "github.event_name == 'workflow_dispatch'" in jobs[PUSH_GATE]["if"]
+            assert jobs[PUSH_GATE]["if"] == (
+                "(github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/')) || "
+                "(github.event_name == 'push' && github.event.ref == "
+                "format('refs/heads/{0}', github.event.repository.default_branch))"
+            )
         assert jobs[PUSH_GATE]["with"]["pushed-ref"] == pushed_ref, workflow
         assert jobs[job]["needs"] == PUSH_GATE, workflow
         assert jobs[job]["if"] == (
@@ -148,7 +160,10 @@ def check_monotonic_cancellation() -> None:
         for step in gate["jobs"]["check"]["steps"]
         if "inputs.cancel-older" in step.get("if", "")
     )
-    assert "steps.compare.outputs.matches == 'true'" in cancel["if"]
+    assert cancel["if"] == (
+        "inputs.cancel-older && (steps.compare.outputs.matches == 'true' || "
+        "github.event_name == 'workflow_dispatch')"
+    )
     assert cancel["env"]["PUSH_REF"] == "${{ inputs.pushed-ref }}"
     assert cancel["env"]["GH_TOKEN"] == "${{ github.token }}"
 
@@ -245,6 +260,16 @@ def check_monotonic_cancellation() -> None:
             == older_targets
         )
         assert execute(410, 9, succeeds=False, MOCK_QUERY_FAILURE="queued") == []
+
+        # A manual run for the case-only sibling can cancel older runs of
+        # that branch while leaving every run on the default branch alone.
+        assert execute(
+            411,
+            10,
+            GITHUB_EVENT_NAME="workflow_dispatch",
+            PUSH_REF="refs/heads/trunk/Main",
+            MOCK_RUNS=json.dumps([*runs, run(413, 8, head_branch="trunk/Main")]),
+        ) == ["405", "413"]
 
 
 if __name__ == "__main__":
