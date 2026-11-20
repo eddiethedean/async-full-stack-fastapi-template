@@ -102,6 +102,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: production
+      args:
+        VITE_PROJECT_NAME: ${VITE_PROJECT_NAME:-}
+        VITE_PROJECT_URL: ${VITE_PROJECT_URL:-}
     labels:
       # Enable Traefik for this service
       - traefik.enable=true

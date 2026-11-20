@@ -10,6 +10,7 @@ import PendingUsers from "@/components/Pending/PendingUsers"
 import useAuth from "@/hooks/useAuth"
 import { privateQueryKey, useSession } from "@/lib/auth"
 import { paginationSearch } from "@/lib/pagination"
+import { projectName } from "@/lib/project"
 import { isForbiddenError } from "@/utils"
 
 export const Route = createFileRoute("/_layout/admin")({
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/_layout/admin")({
   head: () => ({
     meta: [
       {
-        title: "Admin - Async Full Stack FastAPI",
+        title: `Admin - ${projectName}`,
       },
     ],
   }),

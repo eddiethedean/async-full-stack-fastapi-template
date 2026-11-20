@@ -23,6 +23,7 @@ import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
 import { isLoggedIn } from "@/hooks/useAuth"
 import useCustomToast from "@/hooks/useCustomToast"
+import { projectName } from "@/lib/project"
 import { handleError } from "@/utils"
 
 const searchSchema = z.object({
@@ -62,7 +63,7 @@ export const Route = createFileRoute("/reset-password")({
     meta: [
       { name: "referrer", content: "no-referrer" },
       {
-        title: "Reset Password - Async Full Stack FastAPI",
+        title: `Reset Password - ${projectName}`,
       },
     ],
   }),

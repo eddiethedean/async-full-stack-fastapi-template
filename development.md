@@ -240,6 +240,27 @@ its database.
    against a fresh database. Run `bun run --filter frontend build` to check the
    frontend and generated routes.
 
+## Frontend branding
+
+Set `VITE_PROJECT_NAME` before building to set the browser tab titles, logo text
+and accessible name, and footer branding. Set the optional `VITE_PROJECT_URL`
+to your project website. The footer omits the link when the value is blank.
+
+- For the local Vite server or a standalone frontend build, set these values in
+  `frontend/.env` or in your shell.
+- For Docker Compose, set them in the repository root `.env` or export them
+  before building the image. When invoking Docker directly, pass the values
+  with `--build-arg`.
+- For FastAPI Cloud deployment through GitHub Actions, set them as repository
+  variables under **Settings** > **Secrets and variables** > **Actions**.
+
+These values are public and are compiled into the frontend. Rebuild and deploy
+after changing them. The backend's `PROJECT_NAME` controls API and email branding.
+Replace the placeholder logo mark in
+[`Logo.tsx`](./frontend/src/components/Common/Logo.tsx). To add a favicon or
+touch icon, place the file in `frontend/public` and reference it in
+[`frontend/index.html`](./frontend/index.html).
+
 ## Docker Compose Files and Environment Variables
 
 The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.
