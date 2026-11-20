@@ -2,85 +2,11 @@
 
 Deploy the project to [FastAPI Cloud](https://fastapicloud.com) with the included GitHub Actions workflow.
 
-## Release rehearsal
-
-Rehearse the upgrade on a private staging stack that uses the release image
-and a separate PostgreSQL database. Capture a restorable backup before the
-cutover and restore it only to staging for the rehearsal. Use a synthetic or
-approved scrubbed sample, and route staging mail to a capture service.
-
-1. Record the current application version and Alembic revision. Restore the
-   backup into the staging database and verify that accounts and items exist.
-2. Configure the frontend origin, TLS, and the email worker settings. Apply
-   `alembic upgrade head` once with the staging connection settings and run
-   `alembic check`. Confirm that the restored records survived.
-3. Start the new API and frontend together, then start the email worker.
-   Confirm HTTP readiness and worker processing. Sign in in the browser and
-   through the bearer API. Test recovery and invitation delivery. Previously
-   issued credentials should require a new login or reset request.
-4. Keep the backup and record the version, migration head, and test results
-   in the release notes. Repeat the verified sequence during the cutover.
-
-If validation fails, halt the rollout and isolate the affected service. Prefer a
-forward application fix that preserves the new authentication behavior. A
-restore discards writes made after the backup, so rehearse it before cutover
-and account for those writes before using it in production.
-
-### Historical text migration
-
-Upgrades that cross Alembic revision `9c0a54914c78` narrow four text columns to
-255 characters. The migration stops if it finds a longer value and reports a
-table, integer row ID, column, and character count. The failed upgrade rolls
-back without changing the rows.
-
-From a database at revision `e2412789c190`, list all affected rows without
-printing their values.
-
-```sql
-SELECT 'user' AS table_name, u.id, fields.*
-FROM "user" AS u
-CROSS JOIN LATERAL (VALUES
-    ('email', char_length(u.email)),
-    ('full_name', char_length(u.full_name))
-) AS fields(column_name, characters)
-WHERE characters > 255
-UNION ALL
-SELECT 'item', i.id, fields.*
-FROM item AS i
-CROSS JOIN LATERAL (VALUES
-    ('title', char_length(i.title)),
-    ('description', char_length(i.description))
-) AS fields(column_name, characters)
-WHERE characters > 255;
-```
-
-Keep a protected, restorable backup of the original rows. Rehearse the changes
-on a restored copy and explicitly choose an appropriate value for each affected
-field. For email addresses, coordinate any change with the account owner and
-keep addresses unique. Apply the reviewed changes before retrying the migration.
-Check that the query returns no rows, then run `alembic upgrade head`.
-
-### Item ownership on UUID downgrade
-
-Downgrading across revision `d98dd8ec85a3` restores the integer schema, which
-requires every item to have an owner. If an item has no owner, the downgrade
-reports its UUID and stops before changing the schema or data.
-
-Use this query on the UUID schema to find all affected items.
-
-```sql
-SELECT id FROM item WHERE owner_id IS NULL ORDER BY id;
-```
-
-Keep a restorable backup of the affected rows. On a restored copy, rehearse
-setting each item's `owner_id` to the UUID of its verified owner. After applying
-the reviewed changes, retry the downgrade once the query returns no rows.
-
 ## Create the FastAPI Cloud Application
 
 Create an application in FastAPI Cloud and set its [Application Directory](https://fastapicloud.com/docs/builds-and-deployments/application-directory/) to `backend`.
 
-Connect a PostgreSQL database using the [Neon](https://fastapicloud.com/docs/integrations/neon-integration/) or [Supabase](https://fastapicloud.com/docs/integrations/supabase-integration/) integration. Both integrations configure a `DATABASE_URL` secret automatically. You can also configure `DATABASE_URL` manually for another PostgreSQL provider.
+Connect a new PostgreSQL database using the [Neon](https://fastapicloud.com/docs/integrations/neon-integration/) or [Supabase](https://fastapicloud.com/docs/integrations/supabase-integration/) integration. Both integrations configure a `DATABASE_URL` secret automatically. You can also configure `DATABASE_URL` manually for another PostgreSQL provider.
 
 ## Configure the Application
 
@@ -148,6 +74,11 @@ The deployment workflow performs these steps:
 2. Runs `backend/scripts/prestart.sh` to apply database migrations and create the first superuser.
 3. Deploys the project with `uv run fastapi deploy`.
 
+On the first deployment, the preparation step creates the schema and the
+configured first superuser. Check API readiness and sign in from the browser.
+If you enabled email, start the worker and verify recovery and invitation
+delivery. See [Account email delivery](#account-email-delivery).
+
 ## URLs
 
 Replace `your-app.fastapicloud.dev` with the URL of your FastAPI Cloud application.
@@ -160,6 +91,25 @@ Interactive API docs: `https://your-app.fastapicloud.dev/docs`
 
 For deployment to your own server, see the [Docker Compose deployment guide](./deployment-docker-compose.md).
 
+## Release rehearsal
+
+For later releases of your project, rehearse schema changes on a separate
+staging stack with a restored backup. Use synthetic or scrubbed data and
+route staging email to a capture service.
+
+1. Record the running version and database revision. Verify that the backup
+   can be restored to staging.
+2. Apply your project's migrations and run `alembic check`. Verify that
+   existing records survive.
+3. Start the API, frontend, and email worker. Check API readiness,
+   browser and bearer sign-in, and email delivery if enabled.
+4. Repeat the verified sequence in production and keep the backup
+   and test results.
+
+If validation fails, halt the rollout and isolate the affected service.
+A restore discards writes made after the backup. Account for those writes
+before restoring production data.
+
 ## GitHub Repository Automation
 
 The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
@@ -170,14 +120,13 @@ To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokes
 
 ## Account email delivery
 
-When upgrading, stop all previous-version email workers and wait for them to
-exit before applying the database migration. After migrating, run
-`python -m app.email_worker` from the updated backend as a separate long-running
-process. For FastAPI Cloud, stop the external workers before triggering the
-upgrade and start the updated workers on a host with access to the database and
-SMTP service.
-Provide the same `FRONTEND_HOST`, mail settings, and outbox key configuration
-to the API and worker.
+With email enabled, run `python -m app.email_worker` as a separate long-running
+process after preparing the database. On FastAPI Cloud, run the worker on a
+host with access to the database and SMTP service. Provide the same
+`FRONTEND_HOST`, mail settings, and outbox keys to the API and worker.
+
+For later releases, stop all workers and wait for them to exit before applying
+migrations. Start the workers again from the updated project after migration.
 
 Generate a Fernet key using `Fernet.generate_key()` from `cryptography.fernet`
 and store it in the secret manager. Set `EMAIL_OUTBOX_KEYS` to a JSON object

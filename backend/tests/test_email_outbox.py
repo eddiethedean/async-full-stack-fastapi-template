@@ -6,12 +6,12 @@ from smtplib import SMTPConnectError, SMTPRecipientsRefused
 from threading import Event
 from typing import Any
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
-from sqlmodel import col, delete, select, update
+from sqlmodel import col, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import email_worker
@@ -33,7 +33,7 @@ from app.email_outbox import (
 from app.email_worker import deliver_with_lease, process_next_email
 from app.models import User
 from app.utils import EmailData
-from tests.utils.user import user_authentication_headers
+from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 
 pytestmark = pytest.mark.anyio
@@ -45,11 +45,17 @@ async def empty_outbox() -> None:
         await session.exec(delete(EmailOutbox))
 
 
-async def test_rollback_discards_pending_email() -> None:
+@pytest.fixture
+async def email_owner_id(db: AsyncSession) -> UUID:
+    return (await create_random_user(db)).id
+
+
+async def test_rollback_discards_pending_email(email_owner_id: UUID) -> None:
     key = uuid4().hex
     async with create_session() as session:
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="welcome",
             recipient="outbox@example.com",
             deduplication_key=key,
@@ -65,21 +71,15 @@ async def test_rollback_discards_pending_email() -> None:
 
 
 @pytest.mark.parametrize(
-    ("deleted_by_admin", "legacy_writer", "claimed_before_deletion"),
-    [
-        (False, False, False),
-        (True, False, False),
-        (True, True, False),
-        (False, False, True),
-    ],
-    ids=["self-delete", "admin-delete", "old-api", "claimed-before-delete"],
+    ("deleted_by_admin", "claimed_before_deletion"),
+    [(False, False), (True, False), (False, True)],
+    ids=["self-delete", "admin-delete", "claimed-before-delete"],
 )
 async def test_account_deletion_cancels_queued_email(
     client: AsyncClient,
     superuser_token_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
     deleted_by_admin: bool,
-    legacy_writer: bool,
     claimed_before_deletion: bool,
 ) -> None:
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
@@ -101,12 +101,6 @@ async def test_account_deletion_cancels_queued_email(
         assert all(
             str(job.user_id) == user_id and job.failed_at is None for job in pending
         )
-        if legacy_writer:
-            await session.exec(
-                update(EmailOutbox)
-                .where(col(EmailOutbox.recipient) == email)
-                .values(user_id=None)
-            )
 
     if deleted_by_admin:
         path, headers = user_id, superuser_token_headers
@@ -148,6 +142,7 @@ async def test_account_deletion_cancels_queued_email(
             assert job.failed_at and job.last_error == "account_deleted"
             assert job.delivered_at is None and job.user_id is None
             assert job.payload is None and job.key_version is None
+            assert job.lease_id is None and job.lease_expires_at is None
 
 
 @pytest.mark.parametrize("claimed_before_change", [False, True])
@@ -306,10 +301,13 @@ async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
         assert job.user_id is None and job.lease_id is None
 
 
-async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
+async def test_lease_is_exclusive_and_stale_completion_is_ignored(
+    email_owner_id: UUID,
+) -> None:
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="invite",
             recipient="outbox@example.com",
             deduplication_key=uuid4().hex,
@@ -342,7 +340,7 @@ async def test_lease_is_exclusive_and_stale_completion_is_ignored() -> None:
 
 
 async def test_worker_renews_lease_while_rendering(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, email_owner_id: UUID
 ) -> None:
     polled = asyncio.Event()
     renewed = asyncio.Event()
@@ -376,6 +374,7 @@ async def test_worker_renews_lease_while_rendering(
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="welcome",
             recipient="slow-delivery@example.com",
             deduplication_key=uuid4().hex,
@@ -398,7 +397,7 @@ async def test_worker_renews_lease_while_rendering(
 
 
 async def test_worker_retries_transient_smtp_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, email_owner_id: UUID
 ) -> None:
     delivered: list[str] = []
 
@@ -413,6 +412,7 @@ async def test_worker_retries_transient_smtp_error(
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="welcome",
             recipient="retry@example.com",
             deduplication_key=key,
@@ -436,7 +436,7 @@ async def test_worker_retries_transient_smtp_error(
 
 @pytest.mark.parametrize("kind", ["password_reset", "invite"])
 async def test_worker_renders_credential_before_delivery(
-    monkeypatch: pytest.MonkeyPatch, kind: EmailKind
+    monkeypatch: pytest.MonkeyPatch, kind: EmailKind, email_owner_id: UUID
 ) -> None:
     email = "delivery@example.com"
     token = "temporary-credential"
@@ -449,6 +449,7 @@ async def test_worker_renders_credential_before_delivery(
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind=kind,
             recipient=email,
             deduplication_key=uuid4().hex,
@@ -472,6 +473,7 @@ async def test_worker_keeps_polling_after_retiring_a_job(
     expires_delta: timedelta,
     attempts: int,
     last_error: str,
+    email_owner_id: UUID,
 ) -> None:
     delivered: list[str] = []
 
@@ -482,6 +484,7 @@ async def test_worker_keeps_polling_after_retiring_a_job(
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="invite",
             recipient="retired@example.com",
             deduplication_key=uuid4().hex,
@@ -495,6 +498,7 @@ async def test_worker_keeps_polling_after_retiring_a_job(
         retired_id = retired.id
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="welcome",
             recipient="ready@example.com",
             deduplication_key=uuid4().hex,
@@ -513,7 +517,7 @@ async def test_worker_keeps_polling_after_retiring_a_job(
 
 
 async def test_worker_marks_permanent_delivery_failure(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, email_owner_id: UUID
 ) -> None:
     def smtp(**_data: str) -> None:
         raise SMTPRecipientsRefused({"unavailable@example.com": (550, b"unavailable")})
@@ -522,6 +526,7 @@ async def test_worker_marks_permanent_delivery_failure(
     async with create_session() as session, session.begin():
         await enqueue_email(
             session,
+            user_id=email_owner_id,
             kind="invite",
             recipient="unavailable@example.com",
             deduplication_key=uuid4().hex,
