@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 from app.core.database_url import require_test_database
 
@@ -177,12 +178,17 @@ class Settings(BaseSettings):
                 raise ValueError("Test routes require the development environment.")
             require_test_database(self.DATABASE_URL)
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
-        for host in self.DATABASE_URL.hosts():
-            if (password := host["password"]) is not None:
-                self._check_default_secret("DATABASE_URL password", unquote(password))
-        # Query parameters are already decoded and can override the URL password.
-        for key, password in self.DATABASE_URL.query_params():
-            if key == "password":
+        # Psycopg's SQLAlchemy dialect applies query options over the URL fields.
+        query_password = make_url(str(self.DATABASE_URL)).query.get("password")
+        if isinstance(query_password, str):
+            self._check_default_secret("DATABASE_URL password", query_password)
+        else:
+            for host in self.DATABASE_URL.hosts():
+                if (password := host["password"]) is not None:
+                    self._check_default_secret(
+                        "DATABASE_URL password", unquote(password)
+                    )
+            for password in query_password or ():
                 self._check_default_secret("DATABASE_URL password", password)
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
