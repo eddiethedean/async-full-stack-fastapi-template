@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.core.db import create_session, engine
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
+from app.email_outbox import EmailOutbox
 from app.models import User, UserCreate
 from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -77,6 +79,40 @@ async def test_create_user_new_email(
         user = await crud.get_user_by_email(session=db, email=username)
         assert user
         assert user.email == created_user["email"]
+
+
+@pytest.mark.parametrize("is_active", [True, False], ids=["active", "inactive"])
+async def test_welcome_email_for_admin_provisioned_user(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    is_active: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    email = random_email()
+    response = await client.post(
+        f"{settings.API_V1_STR}/users/",
+        headers=superuser_token_headers,
+        json={
+            "email": email,
+            "password": random_lower_string(),
+            "is_active": is_active,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["is_active"] is is_active
+
+    jobs = (
+        await db.exec(select(EmailOutbox).where(col(EmailOutbox.recipient) == email))
+    ).all()
+    if is_active:
+        assert len(jobs) == 1
+        assert jobs[0].kind == "welcome"
+        assert str(jobs[0].user_id) == response.json()["id"]
+    else:
+        assert not jobs
 
 
 async def test_get_existing_user_as_superuser(
@@ -396,6 +432,7 @@ async def test_register_user(client: AsyncClient, db: AsyncSession) -> None:
     created_user = r.json()
     assert created_user["email"] == username
     assert created_user["full_name"] == full_name
+    assert datetime.fromisoformat(created_user["created_at"]).utcoffset() == timedelta()
 
     user_query = select(User).where(User.email == username)
     user_db = (await db.exec(user_query)).first()
@@ -669,21 +706,11 @@ async def test_concurrent_superuser_removals_preserve_one_admin(
 
 
 async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
-    import re
-
-    from sqlalchemy import event
-
-    from app.core.db import engine
-    from app.models import Item
-
     username = random_email()
     password = random_lower_string()
     user_in = UserCreate(email=username, password=password)
     user = await crud.create_user(session=db, user_create=user_in)
     user_id = user.id
-    db.add_all(Item(title=f"Item {index}", owner_id=user_id) for index in range(3))
-    await db.commit()
-
     login_data = {
         "username": username,
         "password": password,
@@ -693,35 +720,12 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     a_token = tokens["access_token"]
     headers = {"Authorization": f"Bearer {a_token}"}
 
-    item_statements: list[str] = []
-
-    def capture_item_queries(
-        _conn: object,
-        _cursor: object,
-        statement: str,
-        _parameters: object,
-        _context: object,
-        _executemany: bool,
-    ) -> None:
-        if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
-            item_statements.append(statement)
-
-    event.listen(engine.sync_engine, "before_cursor_execute", capture_item_queries)
-    try:
-        r = await client.delete(
-            f"{settings.API_V1_STR}/users/me",
-            headers=headers,
-        )
-    finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+    r = await client.delete(f"{settings.API_V1_STR}/users/me", headers=headers)
     assert r.status_code == 200
     deleted_user = r.json()
     assert deleted_user["message"] == "User deleted successfully"
     result = (await db.exec(select(User).where(User.id == user_id))).first()
     assert result is None
-
-    assert not item_statements
-    assert not (await db.exec(select(Item).where(Item.owner_id == user_id))).all()
 
 
 async def test_delete_user_me_as_superuser(
@@ -802,7 +806,7 @@ async def test_delete_user_without_privileges(
 async def test_pending_invitation_activates_only_on_acceptance(
     client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
 ) -> None:
-    from app.email_outbox import EmailOutbox, get_cipher
+    from app.email_outbox import get_cipher
 
     email = random_email()
     with (

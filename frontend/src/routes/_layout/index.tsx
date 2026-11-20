@@ -1,13 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router"
 
 import useAuth from "@/hooks/useAuth"
+import { projectName } from "@/lib/project"
 
 export const Route = createFileRoute("/_layout/")({
   component: Dashboard,
   head: () => ({
     meta: [
       {
-        title: "Dashboard - Async Full Stack FastAPI",
+        title: `Dashboard - ${projectName}`,
       },
     ],
   }),

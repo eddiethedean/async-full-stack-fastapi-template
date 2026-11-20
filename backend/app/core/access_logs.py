@@ -14,9 +14,6 @@ class SensitivePathFilter(logging.Filter):
         args = record.args
         if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
             target = args[2]
-            route = "/password-recovery/"
-            if route in target:
-                target = target.split(route, 1)[0] + route + "{email}"
             if "/reset-password?" in target:
                 target = target.split("?", 1)[0]
             record.args = (*args[:2], target, *args[3:])

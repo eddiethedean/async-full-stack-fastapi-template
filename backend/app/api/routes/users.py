@@ -4,7 +4,6 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlmodel import col, delete
 from starlette.concurrency import run_in_threadpool
 
 from app import crud
@@ -21,7 +20,6 @@ from app.core.security import get_password_hash
 from app.core.sessions import issue_account_action, lock_user
 from app.email_outbox import enqueue_email
 from app.models import (
-    Item,
     Message,
     UpdatePassword,
     User,
@@ -68,7 +66,7 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
     hashed_password = await run_in_threadpool(get_password_hash, user_in.password)
     user = User.model_validate(user_in, update={"hashed_password": hashed_password})
-    if settings.emails_enabled:
+    if user.is_active and settings.emails_enabled:
         await crud.flush_user(session, user)
         await enqueue_email(
             session,
@@ -264,8 +262,6 @@ async def delete_user(
             status_code=403, detail="Super users are not allowed to delete themselves"
         )
     await crud.require_other_active_superuser(session, user)
-    statement = delete(Item).where(col(Item.owner_id) == user_id)
-    await session.exec(statement)
     await session.delete(user)
     await session.commit()
     return Message(message="User deleted successfully")

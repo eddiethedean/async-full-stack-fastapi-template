@@ -25,7 +25,7 @@ async def fetch_page[Model: SQLModel](
     matching = select(model).where(*filters)
     columns = matching.selected_columns
     page = (
-        matching.order_by(columns.created_at.desc().nulls_last(), columns.id.desc())
+        matching.order_by(columns.created_at.desc(), columns.id.desc())
         .offset(pagination.skip)
         .limit(pagination.limit)
         .subquery()
@@ -42,7 +42,7 @@ async def fetch_page[Model: SQLModel](
         select(page_model, total.c.row_count)
         .select_from(total)
         .outerjoin(page, true())
-        .order_by(page.c.created_at.desc().nulls_last(), page.c.id.desc())
+        .order_by(page.c.created_at.desc(), page.c.id.desc())
     )
     rows = (await session.exec(statement)).all()
     return [row for row, _ in rows if row is not None], int(rows[0][1])

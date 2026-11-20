@@ -1,12 +1,4 @@
-import { FaGithub } from "react-icons/fa"
-
-const socialLinks = [
-  {
-    icon: FaGithub,
-    href: "https://github.com/eddiethedean/async-full-stack-fastapi-template",
-    label: "GitHub",
-  },
-]
+import { projectName, projectUrl } from "@/lib/project"
 
 export function Footer() {
   const currentYear = new Date().getFullYear()
@@ -15,22 +7,18 @@ export function Footer() {
     <footer className="border-t py-4 px-6">
       <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
         <p className="text-muted-foreground text-sm">
-          Async Full Stack FastAPI - {currentYear}
+          {projectName} - {currentYear}
         </p>
-        <div className="flex items-center gap-4">
-          {socialLinks.map(({ icon: Icon, href, label }) => (
-            <a
-              key={label}
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={label}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Icon className="h-5 w-5" />
-            </a>
-          ))}
-        </div>
+        {projectUrl && (
+          <a
+            href={projectUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Project website
+          </a>
+        )}
       </div>
     </footer>
   )

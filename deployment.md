@@ -112,7 +112,25 @@ before restoring production data.
 
 ## GitHub Repository Automation
 
-The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
+The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**.
+
+The project changelog starts at `0.1.0`. To start from a different version,
+edit the first numbered heading in `release-notes.md` using the
+`## X.Y.Z (YYYY-MM-DD)` format. Add project changes under **Latest Changes**
+and run **Prepare Release** with the desired bump. After the release pull
+request merges into the default branch, **Create Draft Release** uses that
+merge commit and its release notes. The archived template notes are separate
+from this process.
+
+To preview a patch bump without editing the active changelog:
+
+```bash
+preview_notes=$(mktemp)
+cp release-notes.md "$preview_notes"
+uv run python scripts/prepare_release.py prepare patch --release-notes-file "$preview_notes"
+uv run python scripts/prepare_release.py release-notes --release-notes-file "$preview_notes"
+rm "$preview_notes"
+```
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
@@ -141,13 +159,17 @@ twice with the same message ID and the same single-use link. Check the
 Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
 
+Deactivating an account cancels its pending welcome email, including a claimed
+job whose SMTP attempt has yet to begin. If the worker already holds the
+outbox row lock for SMTP, deactivation waits for that attempt to finish.
+
 Deleting an account cancels its queued email, clears queued credentials, and
 prevents further retries. After rendering, the worker locks the outbox row,
 checks its lease, and holds the lock through the SMTP attempt and result update.
-Changing an account email likewise cancels its queued password recovery and
-clears the recovery payload. A new recovery request uses the current address.
-If the worker takes the lock first, deletion or the email change waits for
-that attempt to finish.
+Changing an account email or password, completing a reset, or deactivating
+the account cancels pending password recovery and clears its queued token.
+Active accounts can request fresh recovery at their current address. If the
+worker takes the lock first, the account change waits for that attempt to finish.
 
 ## Recovering legacy bcrypt accounts
 

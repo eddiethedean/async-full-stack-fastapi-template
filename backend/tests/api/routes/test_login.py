@@ -145,10 +145,21 @@ async def test_unusable_access_credentials(
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-async def test_recovery_password(
-    client: AsyncClient, db: AsyncSession, legacy: bool
-) -> None:
+async def test_path_based_password_recovery_is_absent(client: AsyncClient) -> None:
+    path = f"{settings.API_V1_STR}/password-recovery"
+    schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
+    assert f"{path}/{{email}}" not in schema.json()["paths"]
+
+    api = FastAPI()
+    api.include_router(api_router, prefix=settings.API_V1_STR)
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as auth_api:
+        response = await auth_api.post(f"{path}/retired@example.com")
+    assert response.status_code == 404
+
+
+async def test_recovery_password(client: AsyncClient, db: AsyncSession) -> None:
     email = random_email()
     await create_user(
         session=db, user_create=UserCreate(email=email, password=random_lower_string())
@@ -160,10 +171,7 @@ async def test_recovery_password(
         patch.object(settings, "SMTP_HOST", "smtp.example.com"),
         patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
     ):
-        if legacy:
-            response = await client.post(f"{path}/{submitted_email}")
-        else:
-            response = await client.post(path, json={"email": submitted_email})
+        response = await client.post(path, json={"email": submitted_email})
     assert response.status_code == 200
     assert response.json() == {
         "message": "If that email is registered, we sent a password recovery link"
@@ -178,13 +186,11 @@ async def test_recovery_password(
     assert job and job.kind == "password_reset" and job.payload
 
 
-async def test_recovery_password_user_not_exits(
-    client: AsyncClient, normal_user_token_headers: dict[str, str]
-) -> None:
+async def test_recovery_password_user_not_found(client: AsyncClient) -> None:
     email = "jVgQr@example.com"
     r = await client.post(
-        f"{settings.API_V1_STR}/password-recovery/{email}",
-        headers=normal_user_token_headers,
+        f"{settings.API_V1_STR}/password-recovery",
+        json={"email": email},
     )
     # Should return 200 with generic message to prevent email enumeration attacks
     assert r.status_code == 200

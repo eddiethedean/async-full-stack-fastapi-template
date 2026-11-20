@@ -4,7 +4,6 @@ import { useSyncExternalStore } from "react"
 
 import { AuthService, type BrowserSession, UsersService } from "@/client"
 
-localStorage.removeItem("access_token")
 let session = {
   browser: null as BrowserSession | null,
   restored: false,
