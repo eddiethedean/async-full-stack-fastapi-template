@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from email.headerregistry import Address
 from email.message import EmailMessage
 from pathlib import Path
 from smtplib import SMTP, SMTP_SSL, SMTPRecipientsRefused
@@ -42,7 +43,12 @@ def send_email(
         raise ValueError("Email is disabled")
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
+    sender_local_part, sender_domain = settings.EMAILS_FROM_EMAIL.rsplit("@", 1)
+    message["From"] = Address(
+        display_name=settings.EMAILS_FROM_NAME or "",
+        username=sender_local_part,
+        domain=sender_domain,
+    )
     message["To"] = email_to
     if message_id:
         message["Message-ID"] = f"<{message_id}>"
