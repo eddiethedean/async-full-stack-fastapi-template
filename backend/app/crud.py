@@ -10,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.security import (
+    DUMMY_HASH,
     get_password_hash,
     normalize_account_email,
     verify_password,
@@ -180,11 +181,6 @@ async def get_user_by_email(*, session: AsyncSession, email: str) -> User | None
     statement = select(User).where(User.email == normalize_account_email(email))
     result = await session.exec(statement)
     return result.first()
-
-
-# Dummy hash to use for timing attack prevention when user is not found
-# This is an Argon2 hash of a random password, used to ensure constant-time comparison
-DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZmYjE2NzZlZjY0ZWY3ZGRkY2U2OWFjNjk"
 
 
 async def authenticate(

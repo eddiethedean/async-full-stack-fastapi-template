@@ -22,7 +22,7 @@ from app.core.security import (
 )
 from app.core.sessions import AccountAction, issue_account_action, lock_user
 from app.crud import create_user
-from app.email_outbox import EmailOutbox
+from app.email_outbox import EmailOutbox, get_cipher
 from app.models import AuthSession, User, UserCreate, get_datetime_utc
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -334,12 +334,68 @@ async def test_reset_password_invalid_token(
     assert response["detail"] == "Invalid token"
 
 
+@pytest.mark.parametrize("browser", [False, True], ids=["bearer", "browser"])
+async def test_long_legacy_bcrypt_password_can_be_reset(
+    client: AsyncClient, db: AsyncSession, browser: bool
+) -> None:
+    password = "🌳" * 19
+    # Historical bcrypt used only the first 72 UTF-8 bytes.
+    legacy_hash = BcryptHasher().hash(password.encode("utf-8")[:72])
+    user = User(email=random_email(), hashed_password=legacy_hash)
+    db.add(user)
+    await db.commit()
+    api = settings.API_V1_STR
+    path = f"{api}/auth/session" if browser else f"{api}/login/access-token"
+    credentials = {"username": user.email, "password": password}
+    headers = {"Origin": settings.auth_origins[0]}
+
+    if browser:
+        response = await client.post(path, json=credentials, headers=headers)
+    else:
+        response = await client.post(path, data=credentials)
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Incorrect email or password"}
+    await db.refresh(user)
+    assert user.hashed_password == legacy_hash
+
+    with (
+        patch.object(settings, "SMTP_HOST", "smtp.example.com"),
+        patch.object(settings, "EMAILS_FROM_EMAIL", "from@example.com"),
+    ):
+        recovery = await client.post(
+            f"{api}/password-recovery", json={"email": user.email}
+        )
+    assert recovery.status_code == 200
+    job = (
+        await db.exec(select(EmailOutbox).where(col(EmailOutbox.user_id) == user.id))
+    ).one()
+    assert job.kind == "password_reset" and job.payload and job.key_version
+    token = get_cipher(job.key_version).decrypt(job.payload).decode()
+    new_password = "🌲" * 19
+    reset = await client.post(
+        f"{api}/reset-password/", json={"token": token, "new_password": new_password}
+    )
+    assert reset.status_code == 200
+    await db.refresh(user)
+    assert user.hashed_password.startswith("$argon2")
+
+    credentials["password"] = new_password
+    if browser:
+        login = await client.post(path, json=credentials, headers=headers)
+        assert login.status_code == 200
+        assert login.json()["user"]["email"] == user.email
+    else:
+        login = await client.post(path, data=credentials)
+        assert login.status_code == 200
+        assert login.json()["access_token"]
+
+
 async def test_login_with_bcrypt_password_upgrades_to_argon2(
     client: AsyncClient, db: AsyncSession
 ) -> None:
     """Test that logging in with a bcrypt password hash upgrades it to argon2."""
     email = random_email()
-    password = random_lower_string()
+    password = "🌳" * 18  # 72 UTF-8 bytes is still supported for bcrypt.
 
     # Create a bcrypt hash directly (simulating legacy password)
     bcrypt_hasher = BcryptHasher()
