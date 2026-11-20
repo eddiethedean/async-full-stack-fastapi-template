@@ -64,7 +64,7 @@ jobs:
         run: docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
       - name: Start database
         run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
-      - name: Migrate and initialize database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
+      - name: Stop the previous email worker and migrate
+        run: bash scripts/migrate-compose.sh -f compose.yml -f compose.deploy.yml
       - name: Start application
         run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never

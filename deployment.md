@@ -170,9 +170,12 @@ To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokes
 
 ## Account email delivery
 
-After migrating the database, run `python -m app.email_worker` from the backend
-working directory as a separate long-running process. For FastAPI Cloud, run
-this process on a worker host with access to the same database and SMTP service.
+When upgrading, stop all previous-version email workers and wait for them to
+exit before applying the database migration. After migrating, run
+`python -m app.email_worker` from the updated backend as a separate long-running
+process. For FastAPI Cloud, stop the external workers before triggering the
+upgrade and start the updated workers on a host with access to the database and
+SMTP service.
 Provide the same `FRONTEND_HOST`, mail settings, and outbox key configuration
 to the API and worker.
 
@@ -188,6 +191,11 @@ twice with the same message ID and the same single-use link. Check the
 `email_outbox` delivery status and safe error categories when diagnosing a job.
 Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
+
+Deleting an account cancels its queued email, clears queued credentials, and
+prevents further retries. After rendering, the worker locks the outbox row,
+checks its lease, and holds the lock through the SMTP attempt and result update.
+If the worker takes the lock first, deletion waits for that attempt to finish.
 
 ## Authentication rate limits
 

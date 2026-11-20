@@ -68,7 +68,7 @@ docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml build b
 bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
 docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml pull --ignore-buildable
 docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
-docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml run --rm --no-deps --pull never backend bash scripts/prestart.sh
+bash scripts/migrate-compose.sh --env-file /dev/null -f compose.yml -f compose.deploy.yml
 docker compose --env-file /dev/null -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
 ```
 
@@ -183,10 +183,12 @@ Adminer: `https://adminer.fastapi-project.example.com`
 
 ## Account email delivery
 
-The `email-worker` service uses the backend image. Run the migrations before
-starting the API and worker. Add `EMAIL_OUTBOX_KEYS` to deployment secrets and
-`EMAIL_OUTBOX_KEY_VERSION` to deployment variables when configuring SMTP. Both
-services read the same settings. See [account email delivery](./deployment.md#account-email-delivery)
+The `email-worker` service uses the backend image. The migration script stops
+the previous worker and waits for it to exit before applying migrations. The
+last Compose command starts the worker from the new image. Add
+`EMAIL_OUTBOX_KEYS` to deployment secrets and `EMAIL_OUTBOX_KEY_VERSION` to
+deployment variables when configuring SMTP. Both services read the same
+settings. See [account email delivery](./deployment.md#account-email-delivery)
 for key setup, rotation, and retry behavior.
 
 The base Compose stack builds the unprivileged production image. The development

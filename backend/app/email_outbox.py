@@ -31,6 +31,9 @@ class EmailOutbox(SQLModel, table=True):
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID | None = Field(
+        default=None, foreign_key="user.id", ondelete="SET NULL", index=True
+    )
     kind: str = Field(max_length=24)
     recipient: str = Field(max_length=255)
     deduplication_key: str = Field(max_length=128, unique=True)
@@ -86,6 +89,7 @@ async def enqueue_email(
     kind: EmailKind,
     recipient: str,
     deduplication_key: str,
+    user_id: uuid.UUID | None = None,
     token: str | None = None,
     expires_delta: timedelta = timedelta(hours=48),
 ) -> None:
@@ -93,6 +97,7 @@ async def enqueue_email(
     key_version = active_key() if token is not None else None
     session.add(
         EmailOutbox(
+            user_id=user_id,
             kind=kind,
             recipient=recipient,
             deduplication_key=deduplication_key,
@@ -166,6 +171,21 @@ def clear_payload(row: EmailOutbox) -> None:
     row.key_version = None
 
 
+async def lock_current_email_lease(
+    session: AsyncSession, claimed: ClaimedEmail
+) -> bool:
+    statement = (
+        select(EmailOutbox.id)
+        .where(
+            col(EmailOutbox.id) == claimed.id,
+            col(EmailOutbox.lease_id) == claimed.lease_id,
+            col(EmailOutbox.lease_expires_at) > func.clock_timestamp(),
+        )
+        .with_for_update()
+    )
+    return (await session.exec(statement)).one_or_none() is not None
+
+
 async def renew_email_lease(session: AsyncSession, claimed: ClaimedEmail) -> bool:
     now = func.clock_timestamp()
     result = await session.exec(
@@ -188,14 +208,15 @@ async def complete_email(
     error: str | None = None,
     retryable: bool = False,
 ) -> bool:
-    now = await database_now(session)
+    # Delivery holds the row lock from the lease check through this update.
+    # The active lease is judged at the start of that transaction.
     row = (
         await session.exec(
             select(EmailOutbox)
             .where(
                 col(EmailOutbox.id) == claimed.id,
                 col(EmailOutbox.lease_id) == claimed.lease_id,
-                col(EmailOutbox.lease_expires_at) > now,
+                col(EmailOutbox.lease_expires_at) > func.now(),
             )
             .with_for_update()
         )
@@ -203,6 +224,7 @@ async def complete_email(
     if row is None:
         return False
 
+    now = (await session.exec(select(func.clock_timestamp()))).one()
     row.last_error = error
     if error is None:
         row.delivered_at = now

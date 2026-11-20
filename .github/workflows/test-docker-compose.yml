@@ -93,7 +93,22 @@ jobs:
           PY
           )
       - run: docker compose up -d --wait db mailpit
-      - run: docker compose run --rm --no-deps backend bash scripts/prestart.sh
+      - name: Verify that migration stops the previous email worker
+        run: |
+          docker compose run --rm --no-deps --pull never backend bash scripts/prestart.sh
+          docker compose up -d --wait --no-build email-worker
+          test -n "$(docker compose ps --status running --quiet email-worker)"
+          since=$(date +%s)
+          bash scripts/migrate-compose.sh
+          test -z "$(docker compose ps --status running --quiet email-worker)"
+          docker events --since "$since" --until "$(( $(date +%s) + 1 ))" \
+            --filter type=container --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+            --format '{{.Action}} {{index .Actor.Attributes "com.docker.compose.service"}}' |
+            awk '
+              /^die email-worker$/ { stopped = 1 }
+              /^start backend$/ && stopped { migrated_after_stop = 1 }
+              END { exit !migrated_after_stop }
+            '
       - run: docker compose up -d --wait --no-build backend email-worker
       - name: Verify the production runtime
         run: |
