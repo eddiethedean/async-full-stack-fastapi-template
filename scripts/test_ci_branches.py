@@ -1,4 +1,4 @@
-"""Exercise the exact branch gate and verify safe CI run cancellation."""
+"""Verify CI branch gates, run cancellation, and report upload requirements."""
 
 import json
 import os
@@ -130,6 +130,32 @@ def check_exact_comparison() -> None:
                     check=True,
                 )
                 assert output.read_text() == f"matches={str(matches).lower()}\n", ref
+
+
+def check_report_uploads() -> None:
+    backend_steps = read_workflow("test-backend")["jobs"]["test-backend"]["steps"]
+    backend_upload = next(
+        step for step in backend_steps if step.get("name") == "Store coverage files"
+    )
+    assert backend_upload["with"].get("if-no-files-found") == "error"
+    assert "if" not in backend_upload  # Keep the default success condition.
+
+    if not (WORKFLOWS / "playwright.yml").is_file():
+        return  # The API-only recipe removes the browser workflow.
+    browser_steps = read_workflow("playwright")["jobs"]["test-playwright"]["steps"]
+    browser_tests = next(
+        step for step in browser_steps if step.get("name") == "Run Playwright tests"
+    )
+    test_outcome = f"steps.{browser_tests['id']}.outcome"
+    blob_upload = next(
+        step
+        for step in browser_steps
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert blob_upload["if"] == "${{ !cancelled() }}"
+    assert blob_upload["with"]["if-no-files-found"] == (
+        "${{ " + test_outcome + " == 'success' && 'error' || 'warn' }}"
+    )
 
 
 def check_coverage_availability() -> None:
@@ -418,4 +444,5 @@ if __name__ == "__main__":
     check_workflow_gates()
     check_exact_comparison()
     check_monotonic_cancellation()
+    check_report_uploads()
     check_coverage_availability()

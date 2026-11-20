@@ -118,6 +118,7 @@ jobs:
     - run: docker compose build
     - run: docker compose run --rm backend bash scripts/prestart.sh
     - name: Run Playwright tests
+      id: playwright
       run: docker compose run --rm playwright bunx playwright test --fail-on-flaky-tests --trace=retain-on-failure --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     - name: Remove test stack
       if: ${{ always() }}
@@ -128,6 +129,7 @@ jobs:
       with:
         name: blob-report-${{ matrix.shardIndex }}
         path: frontend/blob-report
+        if-no-files-found: ${{ steps.playwright.outcome == 'success' && 'error' || 'warn' }}
         include-hidden-files: true
         retention-days: 1
 
