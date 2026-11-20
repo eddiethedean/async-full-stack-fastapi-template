@@ -114,8 +114,9 @@ before restoring production data.
 
 The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
 
-Push checks follow the repository's default branch in **Settings** > **Branches**.
-Pull request checks run independently of the default branch name.
+Push checks follow the repository's configured default branch. You can
+[change the default branch](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-branches-in-your-repository/changing-the-default-branch)
+in repository settings. Pull request checks run independently of the default branch name.
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
