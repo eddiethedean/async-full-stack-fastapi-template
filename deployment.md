@@ -141,6 +141,10 @@ twice with the same message ID and the same single-use link. Check the
 Only the time-limited encrypted credential is queued, and the worker discards
 it on delivery or terminal failure.
 
+Deactivating an account cancels its pending welcome email, including a claimed
+job whose SMTP attempt has yet to begin. If the worker already holds the
+outbox row lock for SMTP, deactivation waits for that attempt to finish.
+
 Deleting an account cancels its queued email, clears queued credentials, and
 prevents further retries. After rendering, the worker locks the outbox row,
 checks its lease, and holds the lock through the SMTP attempt and result update.
