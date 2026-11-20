@@ -57,7 +57,7 @@ Build the frontend from the `frontend` directory:
 bun run build
 ```
 
-The build is written to `backend/app/frontend` and served by FastAPI at <http://localhost:8000>. Rebuild the frontend after making frontend changes.
+The build is written to `backend/app/frontend` and served by FastAPI at <http://localhost:8000>. If FastAPI was started before the first build, restart it to serve the bundle. Rebuild the frontend after making frontend changes.
 
 When running the built frontend on local HTTP outside Docker, set `AUTH_TRUSTED_ORIGINS='["http://localhost:8000"]'` as well. Compose applies the local HTTP settings in its development override.
 
@@ -103,9 +103,11 @@ stack.
    `packages/react-email/biome.json` to keep the email lint settings
    available without the frontend. Delete `frontend/`, `scripts/generate-client.sh`, and
    `scripts/test-browser.sh`. In `backend/app/main.py`, remove the
-   `app.frontend("/", directory=FRONTEND_DIR)` call, the `FRONTEND_DIR`
-   constant, and the `Path` import. Keep the API router registration and
-   two blank lines before `class RuntimeFastAPI`.
+   conditional frontend registration, the `FRONTEND_DIR` constant, and
+   the `os` and `Path` imports. Keep the API router registration and two
+   blank lines before `class RuntimeFastAPI`. In
+   `backend/tests/test_standalone_app.py`, remove
+   `test_production_requires_a_frontend_bundle`.
 2. In `backend/Dockerfile`, remove the `frontend-build` stage and the
    `COPY --from=frontend-build` instruction. Keep both Python stages
    (`production` and `development`). In `compose.override.yml`, remove
