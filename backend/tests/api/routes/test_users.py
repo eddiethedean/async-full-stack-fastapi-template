@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -431,6 +432,7 @@ async def test_register_user(client: AsyncClient, db: AsyncSession) -> None:
     created_user = r.json()
     assert created_user["email"] == username
     assert created_user["full_name"] == full_name
+    assert datetime.fromisoformat(created_user["created_at"]).utcoffset() == timedelta()
 
     user_query = select(User).where(User.email == username)
     user_db = (await db.exec(user_query)).first()

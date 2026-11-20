@@ -63,7 +63,7 @@ class User(UserBase, table=True):
         default=False, sa_column_kwargs={"server_default": false()}
     )
     auth_version: int = Field(default=0, sa_column_kwargs={"server_default": text("0")})
-    created_at: datetime | None = Field(default_factory=get_datetime_utc)
+    created_at: datetime = Field(default_factory=get_datetime_utc)
     items: list[Item] = Relationship(
         back_populates="owner", cascade_delete=True, passive_deletes=True
     )
@@ -105,7 +105,7 @@ class RecoveryRequest(SQLModel):
 class UserPublic(UserBase):
     invitation_pending: bool = False
     id: uuid.UUID
-    created_at: datetime | None = None
+    created_at: datetime
 
 
 class UsersPublic(SQLModel):
@@ -133,7 +133,7 @@ class ItemUpdate(SQLModel):
 # Database model, database table inferred from class name
 class Item(ItemBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    created_at: datetime | None = Field(default_factory=get_datetime_utc)
+    created_at: datetime = Field(default_factory=get_datetime_utc)
     owner_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
@@ -143,7 +143,7 @@ class Item(ItemBase, table=True):
 Index(
     "ix_item_owner_created_at_id",
     col(Item.owner_id),
-    col(Item.created_at).desc().nulls_last(),
+    col(Item.created_at).desc(),
     col(Item.id).desc(),
 )
 
@@ -152,7 +152,7 @@ Index(
 class ItemPublic(ItemBase):
     id: uuid.UUID
     owner_id: uuid.UUID
-    created_at: datetime | None = None
+    created_at: datetime
 
 
 class ItemsPublic(SQLModel):

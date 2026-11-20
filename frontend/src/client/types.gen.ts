@@ -114,7 +114,7 @@ export type ItemPublic = {
     /**
      * Created At
      */
-    created_at?: string | null;
+    created_at: string;
 };
 
 /**
@@ -282,7 +282,7 @@ export type UserPublic = {
     /**
      * Created At
      */
-    created_at?: string | null;
+    created_at: string;
 };
 
 /**
