@@ -133,6 +133,8 @@ stack.
    `.github/workflows/test-docker-compose.yml`, remove the HTML
    navigation loop for `/`, `/login`, and `/items`. Keep the API
    readiness, OpenAPI, and email delivery checks.
+6. In `.vscode/launch.json`, remove the **Debug Frontend** launch
+   configuration. Keep the backend Python debugger configuration.
 
 Update your project's README and development and deployment docs to
 remove the React setup, browser test commands, and links to the deleted
