@@ -44,6 +44,11 @@ The frontend development server uses the backend at `http://localhost:8000`, as 
 
 Use the same host name for both servers. The browser sends a session cookie to the API, and `localhost` and `127.0.0.1` count as different sites. `AUTH_COOKIE_SECURE=false` is a local HTTP opt-in and requires development mode.
 
+To confirm authentication, request `GET /api/v1/users/me` with a browser session
+or the bearer token from `POST /api/v1/login/access-token`. To preview password
+recovery and other email templates, run `bun run email:dev` from the repository
+root and open <http://localhost:3333>.
+
 ### Frontend Served by FastAPI
 
 Build the frontend from the `frontend` directory:
