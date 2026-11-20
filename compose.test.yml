@@ -11,7 +11,7 @@ services:
 
   backend:
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
-    build:
+    build: &test-app-build
       target: development
       args:
         VITE_API_URL: ""
@@ -32,8 +32,8 @@ services:
       SMTP_PASSWORD: ""
 
   email-worker:
-    build:
-      target: development
+    # Both services share an image tag and must use the same build inputs.
+    build: *test-app-build
     image: ${COMPOSE_PROJECT_NAME:-asf-test}-backend
     environment:
       DATABASE_URL: postgresql://postgres:test-only-postgres@db:5432/asf_test_suite
