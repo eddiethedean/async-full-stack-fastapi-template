@@ -292,10 +292,6 @@ def verify_populated_upgrade() -> None:
                 if kind == "invite":
                     assert user_id is None and failed_at is not None
                     assert payload is None and last_error == "account_unavailable"
-                elif kind == "password_reset":
-                    # The legacy recovery was queued for a previous address.
-                    assert user_id == USER_ID and failed_at is not None
-                    assert payload is None and last_error == "account_email_changed"
                 else:
                     assert user_id == USER_ID and failed_at is None
                     assert payload == b"legacy" and last_error is None

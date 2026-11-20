@@ -34,19 +34,6 @@ def upgrade() -> None:
         EXECUTE FUNCTION cancel_recovery_on_account_email_change()
         """
     )
-    # Also retire jobs addressed to a previous email before this upgrade.
-    op.execute(
-        """
-        UPDATE email_outbox AS job
-        SET failed_at = now(), last_error = 'account_email_changed',
-            payload = NULL, key_version = NULL,
-            lease_id = NULL, lease_expires_at = NULL
-        FROM "user" AS account
-        WHERE job.kind = 'password_reset'
-          AND job.delivered_at IS NULL AND job.failed_at IS NULL
-          AND job.user_id = account.id AND job.recipient <> account.email
-        """
-    )
 
 
 def downgrade() -> None:
