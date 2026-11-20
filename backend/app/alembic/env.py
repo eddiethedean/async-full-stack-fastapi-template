@@ -71,6 +71,8 @@ def run_migrations_online():
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # A waiter must see the previous upgrade's commit after taking the lock.
+        isolation_level="READ COMMITTED",
     )
 
     with connectable.connect() as connection:
@@ -79,6 +81,11 @@ def run_migrations_online():
         )
 
         with context.begin_transaction():
+            # Serialize online migrations before checking the version table.
+            connection.exec_driver_sql(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended('async-full-stack-fastapi:alembic', 0))"
+            )
             context.run_migrations()
 
 
