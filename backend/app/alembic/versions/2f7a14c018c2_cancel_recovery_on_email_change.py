@@ -20,13 +20,7 @@ def upgrade() -> None:
                 lease_id = NULL, lease_expires_at = NULL
             WHERE kind = 'password_reset'
               AND delivered_at IS NULL AND failed_at IS NULL
-              AND (user_id = NEW.id OR (
-                user_id IS NULL AND deduplication_key IN (
-                  SELECT 'reset:' || action.digest
-                  FROM accountactiontoken AS action
-                  WHERE action.user_id = NEW.id AND action.purpose = 'password_reset'
-                )
-              ));
+              AND user_id = NEW.id;
             RETURN NEW;
         END;
         $$
