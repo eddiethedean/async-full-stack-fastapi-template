@@ -68,7 +68,7 @@ async def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
     hashed_password = await run_in_threadpool(get_password_hash, user_in.password)
     user = User.model_validate(user_in, update={"hashed_password": hashed_password})
-    if settings.emails_enabled:
+    if user.is_active and settings.emails_enabled:
         await crud.flush_user(session, user)
         await enqueue_email(
             session,
