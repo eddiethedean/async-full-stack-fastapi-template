@@ -1,6 +1,6 @@
 import warnings
 from typing import Literal, Self
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import (
@@ -178,7 +178,12 @@ class Settings(BaseSettings):
             require_test_database(self.DATABASE_URL)
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         for host in self.DATABASE_URL.hosts():
-            self._check_default_secret("DATABASE_URL password", host["password"])
+            if (password := host["password"]) is not None:
+                self._check_default_secret("DATABASE_URL password", unquote(password))
+        # Query parameters are already decoded and can override the URL password.
+        for key, password in self.DATABASE_URL.query_params():
+            if key == "password":
+                self._check_default_secret("DATABASE_URL password", password)
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )

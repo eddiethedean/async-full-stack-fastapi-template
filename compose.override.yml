@@ -63,8 +63,9 @@ services:
       - ./backend/htmlcov:/app/backend/htmlcov
     environment:
       FASTAPI_ENV: "development"
+      FRONTEND_HOST: "http://localhost:8000"
       AUTH_COOKIE_SECURE: "false"
-      AUTH_TRUSTED_ORIGINS: '["http://localhost:8000"]'
+      AUTH_TRUSTED_ORIGINS: '["http://localhost:5173"]'
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
@@ -74,6 +75,7 @@ services:
       target: development
     environment:
       FASTAPI_ENV: "development"
+      FRONTEND_HOST: "http://localhost:8000"
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"

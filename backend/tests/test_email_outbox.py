@@ -1,8 +1,12 @@
 import asyncio
 from collections.abc import Callable
 from datetime import timedelta
+from email.headerregistry import Address
+from email.parser import BytesParser
+from email.policy import default
+from functools import partial
 from logging import INFO, LogRecord
-from smtplib import SMTPConnectError, SMTPRecipientsRefused
+from smtplib import SMTP, SMTPConnectError, SMTPRecipientsRefused
 from threading import Event
 from typing import Any
 from unittest.mock import patch
@@ -145,6 +149,63 @@ async def test_account_deletion_cancels_queued_email(
             assert job.lease_id is None and job.lease_expires_at is None
 
 
+@pytest.mark.parametrize("claimed_before_deactivation", [False, True])
+async def test_deactivation_cancels_pending_welcome(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    claimed_before_deactivation: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    prefix = settings.API_V1_STR
+    created = await client.post(
+        f"{prefix}/users/",
+        headers=superuser_token_headers,
+        json={"email": random_email(), "password": random_lower_string()},
+    )
+    assert created.status_code == 200
+    user_id = created.json()["id"]
+    async with create_session() as session:
+        job = (await session.exec(select(EmailOutbox))).one()
+        assert str(job.user_id) == user_id and job.kind == "welcome"
+        assert job.failed_at is None
+
+    async def deactivate() -> None:
+        result = await client.patch(
+            f"{prefix}/users/{user_id}",
+            headers=superuser_token_headers,
+            json={"is_active": False},
+        )
+        assert result.status_code == 200
+
+    async def deactivate_before_send(
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
+        await deactivate()
+        return await deliver_with_lease(session, claimed, on_progress)
+
+    with patch.object(email_worker, "send_email") as send:
+        if claimed_before_deactivation:
+            monkeypatch.setattr(
+                email_worker, "deliver_with_lease", deactivate_before_send
+            )
+            assert await process_next_email()
+        else:
+            await deactivate()
+        send.assert_not_called()
+        assert not await process_next_email()
+
+    async with create_session() as session:
+        job = (await session.exec(select(EmailOutbox))).one()
+        assert job.failed_at is not None and job.last_error == "account_deactivated"
+        assert job.delivered_at is None
+        assert job.payload is None and job.key_version is None
+        assert job.lease_id is None and job.lease_expires_at is None
+
+
 @pytest.mark.parametrize("claimed_before_change", [False, True])
 async def test_email_change_cancels_queued_recovery(
     client: AsyncClient,
@@ -209,6 +270,108 @@ async def test_email_change_cancels_queued_recovery(
         assert await process_next_email()
         send.assert_called_once()
         assert send.call_args.kwargs["email_to"] == new_email
+
+
+@pytest.mark.parametrize(
+    ("change", "claimed_before_change"),
+    [("reset", False), ("self", False), ("admin", True), ("deactivate", False)],
+    ids=["password-reset", "self-password", "claimed-admin-password", "deactivate"],
+)
+async def test_credential_invalidation_cancels_pending_recovery(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    claimed_before_change: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    email, password = random_email(), random_lower_string()
+    prefix = settings.API_V1_STR
+    signup = await client.post(
+        f"{prefix}/users/signup", json={"email": email, "password": password}
+    )
+    assert signup.status_code == 200
+    user_id = signup.json()["id"]
+    recovery_url = f"{prefix}/password-recovery"
+    assert (await client.post(recovery_url, json={"email": email})).status_code == 200
+
+    new_password = random_lower_string()
+    token = ""
+    if change == "reset":
+        async with create_session() as session:
+            job = (await session.exec(select(EmailOutbox))).one()
+            assert job.payload is not None and job.key_version is not None
+            token = get_cipher(job.key_version).decrypt(job.payload).decode()
+        with patch.object(email_worker, "send_email") as send:
+            assert await process_next_email()
+            send.assert_called_once()
+        assert (
+            await client.post(recovery_url, json={"email": email})
+        ).status_code == 200
+
+    async def change_credentials() -> None:
+        if change == "reset":
+            result = await client.post(
+                f"{prefix}/reset-password/",
+                json={"token": token, "new_password": new_password},
+            )
+        elif change == "self":
+            headers = await user_authentication_headers(
+                client=client, email=email, password=password
+            )
+            result = await client.patch(
+                f"{prefix}/users/me/password",
+                headers=headers,
+                json={"current_password": password, "new_password": new_password},
+            )
+        else:
+            result = await client.patch(
+                f"{prefix}/users/{user_id}",
+                headers=superuser_token_headers,
+                json=(
+                    {"is_active": False}
+                    if change == "deactivate"
+                    else {"password": new_password}
+                ),
+            )
+        assert result.status_code == 200
+
+    async def change_before_send(
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
+        await change_credentials()
+        return await deliver_with_lease(session, claimed, on_progress)
+
+    with patch.object(email_worker, "send_email") as send:
+        if claimed_before_change:
+            with monkeypatch.context() as patch_worker:
+                patch_worker.setattr(
+                    email_worker, "deliver_with_lease", change_before_send
+                )
+                assert await process_next_email()
+        else:
+            await change_credentials()
+        send.assert_not_called()
+        assert not await process_next_email()
+
+        async with create_session() as session:
+            jobs = (await session.exec(select(EmailOutbox))).all()
+            assert len(jobs) == (2 if change == "reset" else 1)
+            job = next(job for job in jobs if job.delivered_at is None)
+            assert job.failed_at is not None
+            assert job.last_error == "account_credentials_changed"
+            assert job.payload is None and job.key_version is None
+            assert job.lease_id is None and job.lease_expires_at is None
+
+        if change != "deactivate":
+            assert (
+                await client.post(recovery_url, json={"email": email})
+            ).status_code == 200
+            assert await process_next_email()
+            send.assert_called_once()
 
 
 async def test_account_deletion_waits_for_smtp_and_preserves_delivery(
@@ -552,6 +715,7 @@ async def test_admin_mail_probe_uses_configured_transport(
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(settings, "SMTP_PORT", 1025)
     monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_NAME", "Example, Inc.")
     monkeypatch.setattr(settings, "SMTP_USER", "test")
     monkeypatch.setattr(settings, "SMTP_PASSWORD", "test-only")
     monkeypatch.setattr(settings, "SMTP_TLS", tls)
@@ -561,7 +725,8 @@ async def test_admin_mail_probe_uses_configured_transport(
         patch("app.utils.SMTP_SSL") as smtp_ssl,
     ):
         connection = (smtp_ssl if ssl else smtp).return_value
-        connection.send_message.return_value = {}
+        connection.send_message.side_effect = partial(SMTP.send_message, connection)
+        connection.sendmail.return_value = {}
         response = await client.post(
             f"{settings.API_V1_STR}/utils/test-email/",
             headers=superuser_token_headers,
@@ -570,7 +735,14 @@ async def test_admin_mail_probe_uses_configured_transport(
         assert response.status_code == 201
         assert connection.starttls.call_count == int(tls and not ssl)
         connection.login.assert_called_once_with("test", "test-only")
-        message = connection.send_message.call_args.args[0]
+        connection.sendmail.assert_called_once()
+        sender, recipients, wire_message, *_ = connection.sendmail.call_args.args
+        assert sender == "from@example.com"
+        assert recipients == ["recipient@example.com"]
+        message = BytesParser(policy=default).parsebytes(wire_message)
+        assert message["From"].addresses == (
+            Address(display_name="Example, Inc.", addr_spec="from@example.com"),
+        )
         assert message["To"] == "recipient@example.com"
 
 
@@ -603,11 +775,11 @@ async def test_admin_mail_probe_when_email_is_disabled(
     smtp_ssl.assert_not_called()
 
 
-def test_legacy_recovery_access_logs_remove_sensitive_targets() -> None:
+def test_recovery_access_logs_remove_sensitive_targets() -> None:
     for original, expected in (
         (
-            "/api/v1/password-recovery/user@example.com",
-            "/api/v1/password-recovery/{email}",
+            "/api/v1/password-recovery-html-content/user@example.com",
+            "/api/v1/password-recovery-html-content/{email}",
         ),
         ("/reset-password?token=example", "/reset-password"),
     ):

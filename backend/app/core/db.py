@@ -35,11 +35,19 @@ async def init_db(session: AsyncSession) -> None:
     # async with engine.begin() as connection:
     #     await connection.run_sync(SQLModel.metadata.create_all)
 
-    user = await crud.get_user_by_email(session=session, email=settings.FIRST_SUPERUSER)
-    if not user:
-        user_in = UserCreate(
-            email=settings.FIRST_SUPERUSER,
-            password=settings.FIRST_SUPERUSER_PASSWORD,
-            is_superuser=True,
-        )
+    email = settings.FIRST_SUPERUSER
+    if await crud.get_user_by_email(session=session, email=email):
+        return
+
+    user_in = UserCreate(
+        email=email,
+        password=settings.FIRST_SUPERUSER_PASSWORD,
+        is_superuser=True,
+    )
+    try:
         await crud.create_user(session=session, user_create=user_in)
+    except crud.DuplicateEmailError:
+        # create_user rolls back the failed insert before reporting the conflict.
+        user = await crud.get_user_by_email(session=session, email=email)
+        if user is None or not (user.is_active and user.is_superuser):
+            raise

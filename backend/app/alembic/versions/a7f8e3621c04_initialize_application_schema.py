@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column(
             "auth_version", sa.Integer(), server_default=sa.text("0"), nullable=False
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
             "NOT invitation_pending OR NOT is_active",
             name="ck_user_pending_invitation_inactive",
@@ -144,7 +144,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("description", sa.String(length=255), nullable=True),
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("owner_id", sa.Uuid(), nullable=False),
         sa.ForeignKeyConstraint(["owner_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -154,10 +154,36 @@ def upgrade() -> None:
         "item",
         [
             "owner_id",
-            sa.text("created_at DESC NULLS LAST"),
+            sa.text("created_at DESC"),
             sa.text("id DESC"),
         ],
         unique=False,
+    )
+
+    op.execute(
+        """
+        CREATE FUNCTION cancel_welcome_on_deactivation() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            UPDATE email_outbox
+            SET failed_at = now(), last_error = 'account_deactivated',
+                payload = NULL, key_version = NULL,
+                lease_id = NULL, lease_expires_at = NULL
+            WHERE kind = 'welcome'
+              AND delivered_at IS NULL AND failed_at IS NULL
+              AND user_id = NEW.id;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER cancel_welcome_on_deactivation
+        AFTER UPDATE OF is_active ON "user"
+        FOR EACH ROW WHEN (OLD.is_active AND NOT NEW.is_active)
+        EXECUTE FUNCTION cancel_welcome_on_deactivation()
+        """
     )
 
     op.execute(
@@ -186,11 +212,13 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE FUNCTION cancel_recovery_on_account_email_change() RETURNS trigger
+        CREATE FUNCTION cancel_invalidated_account_recovery() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
             UPDATE email_outbox
-            SET failed_at = now(), last_error = 'account_email_changed',
+            SET failed_at = now(),
+                last_error = CASE WHEN OLD.email IS DISTINCT FROM NEW.email
+                    THEN 'account_email_changed' ELSE 'account_credentials_changed' END,
                 payload = NULL, key_version = NULL,
                 lease_id = NULL, lease_expires_at = NULL
             WHERE kind = 'password_reset'
@@ -203,19 +231,24 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        CREATE TRIGGER cancel_recovery_on_account_email_change
-        AFTER UPDATE OF email ON "user"
-        FOR EACH ROW WHEN (OLD.email IS DISTINCT FROM NEW.email)
-        EXECUTE FUNCTION cancel_recovery_on_account_email_change()
+        CREATE TRIGGER cancel_invalidated_account_recovery
+        AFTER UPDATE OF email, auth_version ON "user"
+        FOR EACH ROW WHEN (
+            OLD.email IS DISTINCT FROM NEW.email
+            OR OLD.auth_version IS DISTINCT FROM NEW.auth_version
+        )
+        EXECUTE FUNCTION cancel_invalidated_account_recovery()
         """
     )
 
 
 def downgrade() -> None:
-    op.execute('DROP TRIGGER cancel_recovery_on_account_email_change ON "user"')
-    op.execute("DROP FUNCTION cancel_recovery_on_account_email_change()")
+    op.execute('DROP TRIGGER cancel_invalidated_account_recovery ON "user"')
+    op.execute("DROP FUNCTION cancel_invalidated_account_recovery()")
     op.execute('DROP TRIGGER cancel_deleted_account_email ON "user"')
     op.execute("DROP FUNCTION cancel_deleted_account_email()")
+    op.execute('DROP TRIGGER cancel_welcome_on_deactivation ON "user"')
+    op.execute("DROP FUNCTION cancel_welcome_on_deactivation()")
 
     op.drop_table("item")
     op.drop_table("email_outbox")

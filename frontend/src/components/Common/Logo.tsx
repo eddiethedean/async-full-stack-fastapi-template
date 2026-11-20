@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import { Zap } from "lucide-react"
 
+import { projectName } from "@/lib/project"
 import { cn } from "@/lib/utils"
 
 interface LogoProps {
@@ -17,7 +18,7 @@ export function Logo({
   const content = (
     <span
       role="img"
-      aria-label="Async Full Stack FastAPI"
+      aria-label={projectName}
       className={cn(
         "inline-flex items-center gap-2 text-foreground",
         className,
@@ -31,7 +32,7 @@ export function Logo({
             variant === "responsive" && "group-data-[collapsible=icon]:hidden",
           )}
         >
-          Async Full Stack FastAPI
+          {projectName}
         </span>
       )}
     </span>

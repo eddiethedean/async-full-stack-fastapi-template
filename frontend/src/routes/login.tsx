@@ -22,6 +22,7 @@ import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
 import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 import { accountEmail } from "@/lib/account-email"
+import { projectName } from "@/lib/project"
 
 const formSchema = z.object({
   username: accountEmail,
@@ -45,7 +46,7 @@ export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
       {
-        title: "Log In - Async Full Stack FastAPI",
+        title: `Log In - ${projectName}`,
       },
     ],
   }),

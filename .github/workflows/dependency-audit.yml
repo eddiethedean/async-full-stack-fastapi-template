@@ -30,10 +30,4 @@ jobs:
       - name: Audit locked Python runtime dependencies
         run: uv audit --locked --no-dev --preview
       - name: Audit locked Bun runtime dependencies
-        run: |
-          filters=()
-          if [[ "$(date -u +%F)" < "2026-12-18" ]]; then
-            # Build-only picomatch dependency with no released fix. Review in #12.
-            filters+=(--ignore=GHSA-fc5q-39xc-vjpf)
-          fi
-          bun audit --prod --audit-level=high "${filters[@]}"
+        run: bun audit --prod --audit-level=high

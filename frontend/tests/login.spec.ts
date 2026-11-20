@@ -39,6 +39,9 @@ test("Forgot Password link is visible", async ({ page }) => {
 })
 
 test("Log in with valid email and password ", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("access_token", "unrelated-storage-value")
+  })
   await page.goto("/login")
 
   await fillForm(page, firstSuperuser, firstSuperuserPassword)
@@ -49,9 +52,9 @@ test("Log in with valid email and password ", async ({ page }) => {
     cookie.name.endsWith("asf_session"),
   )
   expect(cookie?.httpOnly).toBe(true)
-  expect(
-    await page.evaluate(() => localStorage.getItem("access_token")),
-  ).toBeNull()
+  expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe(
+    "unrelated-storage-value",
+  )
   await page.reload()
 
   await expect(

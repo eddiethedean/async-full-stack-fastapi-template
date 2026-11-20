@@ -3,11 +3,16 @@ from httpx import AsyncClient
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.routes.private import PrivateUserCreate
 from app.core.config import settings
 from app.models import User
 from tests.utils.utils import random_email
 
 pytestmark = pytest.mark.anyio
+
+
+def test_private_fixture_create_schema() -> None:
+    assert set(PrivateUserCreate.model_fields) == {"email", "password", "full_name"}
 
 
 async def test_test_mode_is_excluded_from_openapi(client: AsyncClient) -> None:
@@ -18,6 +23,7 @@ async def test_test_mode_is_excluded_from_openapi(client: AsyncClient) -> None:
 
     schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
     assert path not in schema.json()["paths"]
+    assert f"{settings.API_V1_STR}/private/users/" not in schema.json()["paths"]
 
 
 async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
@@ -39,6 +45,44 @@ async def test_create_user(client: AsyncClient, db: AsyncSession) -> None:
     assert user
     assert user.email == "pollo@listo.com"
     assert user.full_name == "Pollo Listo"
+
+
+async def test_create_user_reports_duplicate_without_overwriting_fixture(
+    client: AsyncClient,
+) -> None:
+    path = f"{settings.API_V1_STR}/private/users/"
+    email = random_email()
+    password = "original-fixture-password"
+    created = await client.post(
+        path,
+        json={"email": email, "password": password, "full_name": "Original Fixture"},
+    )
+    assert created.status_code == 200
+
+    duplicate = await client.post(
+        path,
+        json={
+            "email": email,
+            "password": "different-fixture-password",
+            "full_name": "Different Fixture",
+        },
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {"detail": "User with this email already exists"}
+
+    login = await client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": email, "password": password},
+    )
+    assert login.status_code == 200
+    account = await client.get(
+        f"{settings.API_V1_STR}/users/me",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+    assert account.status_code == 200
+    assert account.json() == created.json()
+    schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
+    assert path not in schema.json()["paths"]
 
 
 @pytest.mark.parametrize(

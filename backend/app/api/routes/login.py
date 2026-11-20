@@ -75,10 +75,13 @@ def test_token(current_user: CurrentUser) -> Any:
     return current_user
 
 
-async def queue_recovery(email: str, session: SessionDep, request: Request) -> Message:
-    await enforce_rate_limit(request, action="recovery", email=email)
+@router.post("/password-recovery")
+async def recover_password_by_email(
+    body: RecoveryRequest, session: SessionDep, request: Request
+) -> Message:
+    await enforce_rate_limit(request, action="recovery", email=body.email)
     if settings.emails_enabled:
-        account_email = security.normalize_account_email(email)
+        account_email = security.normalize_account_email(body.email)
         user = (
             await session.exec(
                 select(User)
@@ -105,20 +108,6 @@ async def queue_recovery(email: str, session: SessionDep, request: Request) -> M
     return Message(
         message="If that email is registered, we sent a password recovery link"
     )
-
-
-@router.post("/password-recovery")
-async def recover_password_by_email(
-    body: RecoveryRequest, session: SessionDep, request: Request
-) -> Message:
-    return await queue_recovery(body.email, session, request)
-
-
-@router.post("/password-recovery/{email}", deprecated=True)
-async def recover_password(
-    email: str, session: SessionDep, request: Request
-) -> Message:
-    return await queue_recovery(email, session, request)
 
 
 @router.post("/invitations/accept")
