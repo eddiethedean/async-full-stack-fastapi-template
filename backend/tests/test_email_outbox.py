@@ -775,22 +775,15 @@ async def test_admin_mail_probe_when_email_is_disabled(
     smtp_ssl.assert_not_called()
 
 
-def test_recovery_access_logs_remove_sensitive_targets() -> None:
-    for original, expected in (
-        (
-            "/api/v1/password-recovery-html-content/user@example.com",
-            "/api/v1/password-recovery-html-content/{email}",
-        ),
-        ("/reset-password?token=example", "/reset-password"),
-    ):
-        record = LogRecord(
-            "uvicorn.access",
-            INFO,
-            "test",
-            0,
-            "%s %s %s %s %s",
-            ("local", "GET", original, "1.1", 200),
-            None,
-        )
-        assert SensitivePathFilter().filter(record)
-        assert record.args == ("local", "GET", expected, "1.1", 200)
+def test_password_reset_access_logs_remove_token() -> None:
+    record = LogRecord(
+        "uvicorn.access",
+        INFO,
+        "test",
+        0,
+        "%s %s %s %s %s",
+        ("local", "GET", "/reset-password?token=example", "1.1", 200),
+        None,
+    )
+    assert SensitivePathFilter().filter(record)
+    assert record.args == ("local", "GET", "/reset-password", "1.1", 200)

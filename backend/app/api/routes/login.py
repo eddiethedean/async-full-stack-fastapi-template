@@ -1,16 +1,14 @@
 import hashlib
 from datetime import timedelta
-from email.header import Header
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import col, select
 from starlette.concurrency import run_in_threadpool
 
 from app import crud
-from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
+from app.api.deps import SessionDep
 from app.core import security
 from app.core.config import settings
 from app.core.rate_limits import enforce_rate_limit
@@ -28,10 +26,8 @@ from app.models import (
     RecoveryRequest,
     Token,
     User,
-    UserPublic,
     get_datetime_utc,
 )
-from app.utils import generate_reset_password_email
 
 router = APIRouter(tags=["login"])
 
@@ -65,14 +61,6 @@ async def login_access_token(
     session.add(auth_session)
     await session.commit()
     return Token(access_token=security.create_access_token(auth_session))
-
-
-@router.post("/login/test-token", response_model=UserPublic)
-def test_token(current_user: CurrentUser) -> Any:
-    """
-    Test access token
-    """
-    return current_user
 
 
 @router.post("/password-recovery")
@@ -149,32 +137,3 @@ async def reset_password(session: SessionDep, body: NewPassword) -> Message:
     await crud.set_password(session, user, new_hash)
     await session.commit()
     return Message(message="Password updated successfully")
-
-
-@router.post(
-    "/password-recovery-html-content/{email}",
-    dependencies=[Depends(get_current_active_superuser)],
-    response_class=HTMLResponse,
-)
-async def recover_password_html_content(
-    email: str, session: SessionDep
-) -> HTMLResponse:
-    """Return the preview with an RFC 2047 Subject header for non-ASCII text."""
-    user = await crud.get_user_by_email(session=session, email=email)
-
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="The user with this username does not exist in the system.",
-        )
-    email_data = await run_in_threadpool(
-        generate_reset_password_email,
-        email_to=user.email,
-        email=email,
-        token="preview-only",
-    )
-
-    subject = email_data.subject
-    if not subject.isascii():
-        subject = Header(subject, "utf-8", maxlinelen=75).encode(linesep="")
-    return HTMLResponse(content=email_data.html_content, headers={"Subject": subject})

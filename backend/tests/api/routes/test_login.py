@@ -1,6 +1,5 @@
 import asyncio
 from datetime import timedelta
-from email.message import EmailMessage
 from unittest.mock import patch
 from uuid import UUID
 
@@ -55,13 +54,38 @@ async def test_get_access_token_incorrect_password(client: AsyncClient) -> None:
 async def test_use_access_token(
     client: AsyncClient, superuser_token_headers: dict[str, str]
 ) -> None:
-    r = await client.post(
-        f"{settings.API_V1_STR}/login/test-token",
+    r = await client.get(
+        f"{settings.API_V1_STR}/users/me",
         headers=superuser_token_headers,
     )
     result = r.json()
     assert r.status_code == 200
-    assert "email" in result
+    assert result["email"] == settings.FIRST_SUPERUSER
+
+
+@pytest.mark.parametrize(
+    ("schema_path", "request_path"),
+    [
+        ("/login/test-token", "/login/test-token"),
+        (
+            "/password-recovery-html-content/{email}",
+            "/password-recovery-html-content/retired@example.com",
+        ),
+    ],
+)
+async def test_sample_routes_are_absent(
+    client: AsyncClient, schema_path: str, request_path: str
+) -> None:
+    schema = await client.get(f"{settings.API_V1_STR}/openapi.json")
+    assert f"{settings.API_V1_STR}{schema_path}" not in schema.json()["paths"]
+
+    api = FastAPI()
+    api.include_router(api_router, prefix=settings.API_V1_STR)
+    async with AsyncClient(
+        transport=ASGITransport(app=api), base_url="http://test"
+    ) as auth_api:
+        response = await auth_api.post(f"{settings.API_V1_STR}{request_path}")
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -159,37 +183,6 @@ async def test_recovery_password(client: AsyncClient, db: AsyncSession) -> None:
         )
     ).first()
     assert job and job.kind == "password_reset" and job.payload
-
-
-@pytest.mark.parametrize("local_part_prefix", ["", "田中"])
-async def test_recovery_html_preview_subject(
-    client: AsyncClient,
-    db: AsyncSession,
-    superuser_token_headers: dict[str, str],
-    local_part_prefix: str,
-) -> None:
-    email = f"{local_part_prefix}{random_email()}"
-    await create_user(
-        session=db, user_create=UserCreate(email=email, password=random_lower_string())
-    )
-
-    response = await client.post(
-        f"{settings.API_V1_STR}/password-recovery-html-content/{email}",
-        headers=superuser_token_headers,
-    )
-
-    assert response.status_code == 200
-    assert email in response.text
-    assert "preview-only" in response.text
-    subject = response.headers["subject"]
-    assert subject.isascii()
-    assert "\r" not in subject and "\n" not in subject
-    expected_subject = f"{settings.PROJECT_NAME} - Password recovery for user {email}"
-    if not local_part_prefix:
-        assert subject == expected_subject
-    message = EmailMessage()
-    message["Subject"] = subject
-    assert str(message["Subject"]) == expected_subject
 
 
 async def test_recovery_password_user_not_found(client: AsyncClient) -> None:
