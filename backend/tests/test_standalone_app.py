@@ -59,6 +59,10 @@ async def test_frontend_fallback_preserves_api_namespace(
     frontend_dir.mkdir()
     index = "<!doctype html><title>Frontend fixture</title>"
     (frontend_dir / "index.html").write_text(index)
+    asset = frontend_dir / api_prefix.lstrip("/") / "catalog.json"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("{}")
+    (frontend_dir / "catalog.json").write_text("{}")
     monkeypatch.setattr(settings, "API_V1_STR", api_prefix)
     app = runpy.run_path(str(isolated_app_entry_point))["app"]
 
@@ -73,6 +77,9 @@ async def test_frontend_fallback_preserves_api_namespace(
             assert response.json() == {"detail": "Not Found"}
 
         assert (await client.head(f"{api_prefix}/does-not-exist")).status_code == 404
+        for method in ("GET", "HEAD", "POST", "PATCH"):
+            response = await client.request(method, f"{api_prefix}/catalog.json")
+            assert response.status_code == 404, method
 
         health_path = f"{api_prefix}/utils/health-check/"
         assert (await client.get(health_path)).json() is True
@@ -83,3 +90,6 @@ async def test_frontend_fallback_preserves_api_namespace(
             response = await client.get(path)
             assert response.status_code == 200
             assert response.text == index
+
+        assert (await client.get("/catalog.json")).json() == {}
+        assert (await client.post("/catalog.json")).status_code == 405

@@ -103,9 +103,9 @@ stack.
    `packages/react-email/biome.json` to keep the email lint settings
    available without the frontend. Delete `frontend/`, `scripts/generate-client.sh`, and
    `scripts/test-browser.sh`. In `backend/app/main.py`, remove the
-   conditional frontend registration, `reject_api_frontend_fallback`,
+   conditional frontend fallback setup, `create_frontend_fallback`,
    the `FRONTEND_DIR` constant, and the `os`, `Path`, `APIRouter`,
-   `Depends`, and `HTTPException` imports. Keep the API router registration
+   `Receive`, `Scope`, and `Send` imports. Keep the API router registration
    and two blank lines before `class RuntimeFastAPI`. In
    `backend/tests/test_standalone_app.py`, remove the tests
    `test_production_requires_a_frontend_bundle` and
