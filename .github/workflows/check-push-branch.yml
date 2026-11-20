@@ -1,0 +1,34 @@
+name: Check push branch
+
+on:
+  workflow_call:
+    inputs:
+      pushed-ref:
+        description: Full ref from the push event
+        required: true
+        type: string
+    outputs:
+      matches:
+        description: Whether the pushed ref exactly matches the default branch
+        value: ${{ jobs.check.outputs.matches }}
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matches: ${{ steps.compare.outputs.matches }}
+    steps:
+      - name: Match the default branch with exact case
+        id: compare
+        env:
+          PUSH_REF: ${{ inputs.pushed-ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          matches=false
+          if [ "$PUSH_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+            matches=true
+          fi
+          printf 'matches=%s\n' "$matches" >> "$GITHUB_OUTPUT"
