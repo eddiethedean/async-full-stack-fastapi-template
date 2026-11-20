@@ -46,6 +46,7 @@ jobs:
         with:
           name: coverage-html
           path: backend/htmlcov
+          if-no-files-found: error
           include-hidden-files: true
       - name: Coverage report
         run: uv run coverage report --fail-under=90
