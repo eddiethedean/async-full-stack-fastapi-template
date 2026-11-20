@@ -149,6 +149,63 @@ async def test_account_deletion_cancels_queued_email(
             assert job.lease_id is None and job.lease_expires_at is None
 
 
+@pytest.mark.parametrize("claimed_before_deactivation", [False, True])
+async def test_deactivation_cancels_pending_welcome(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    claimed_before_deactivation: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    prefix = settings.API_V1_STR
+    created = await client.post(
+        f"{prefix}/users/",
+        headers=superuser_token_headers,
+        json={"email": random_email(), "password": random_lower_string()},
+    )
+    assert created.status_code == 200
+    user_id = created.json()["id"]
+    async with create_session() as session:
+        job = (await session.exec(select(EmailOutbox))).one()
+        assert str(job.user_id) == user_id and job.kind == "welcome"
+        assert job.failed_at is None
+
+    async def deactivate() -> None:
+        result = await client.patch(
+            f"{prefix}/users/{user_id}",
+            headers=superuser_token_headers,
+            json={"is_active": False},
+        )
+        assert result.status_code == 200
+
+    async def deactivate_before_send(
+        session: AsyncSession,
+        claimed: ClaimedEmail,
+        on_progress: Callable[[], None] | None,
+    ) -> bool:
+        await deactivate()
+        return await deliver_with_lease(session, claimed, on_progress)
+
+    with patch.object(email_worker, "send_email") as send:
+        if claimed_before_deactivation:
+            monkeypatch.setattr(
+                email_worker, "deliver_with_lease", deactivate_before_send
+            )
+            assert await process_next_email()
+        else:
+            await deactivate()
+        send.assert_not_called()
+        assert not await process_next_email()
+
+    async with create_session() as session:
+        job = (await session.exec(select(EmailOutbox))).one()
+        assert job.failed_at is not None and job.last_error == "account_deactivated"
+        assert job.delivered_at is None
+        assert job.payload is None and job.key_version is None
+        assert job.lease_id is None and job.lease_expires_at is None
+
+
 @pytest.mark.parametrize("claimed_before_change", [False, True])
 async def test_email_change_cancels_queued_recovery(
     client: AsyncClient,

@@ -162,6 +162,32 @@ def upgrade() -> None:
 
     op.execute(
         """
+        CREATE FUNCTION cancel_welcome_on_deactivation() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            UPDATE email_outbox
+            SET failed_at = now(), last_error = 'account_deactivated',
+                payload = NULL, key_version = NULL,
+                lease_id = NULL, lease_expires_at = NULL
+            WHERE kind = 'welcome'
+              AND delivered_at IS NULL AND failed_at IS NULL
+              AND user_id = NEW.id;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER cancel_welcome_on_deactivation
+        AFTER UPDATE OF is_active ON "user"
+        FOR EACH ROW WHEN (OLD.is_active AND NOT NEW.is_active)
+        EXECUTE FUNCTION cancel_welcome_on_deactivation()
+        """
+    )
+
+    op.execute(
+        """
         CREATE FUNCTION cancel_deleted_account_email() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
@@ -221,6 +247,8 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION cancel_invalidated_account_recovery()")
     op.execute('DROP TRIGGER cancel_deleted_account_email ON "user"')
     op.execute("DROP FUNCTION cancel_deleted_account_email()")
+    op.execute('DROP TRIGGER cancel_welcome_on_deactivation ON "user"')
+    op.execute("DROP FUNCTION cancel_welcome_on_deactivation()")
 
     op.drop_table("item")
     op.drop_table("email_outbox")
