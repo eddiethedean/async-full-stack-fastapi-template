@@ -105,6 +105,14 @@ set `TRAEFIK_INGRESS_SUBNET` and an unused `TRAEFIK_INGRESS_IP` within it.
 Set `FORWARDED_ALLOW_IPS` only when you need to customize the trusted proxy
 addresses. Include the Traefik ingress address when Traefik serves the API.
 
+Traefik reads Docker service labels through `docker-discovery` on a separate
+internal network shared by those two services. Keep
+`docker/traefik-discovery.cfg` with the Compose files on the deployment host.
+The Docker socket is mounted only in `docker-discovery`, which allows Docker
+API reads for version negotiation, container discovery, and event streaming.
+Container inspection includes sensitive metadata such as environment variables.
+Keep the discovery network private and reserve it for these services.
+
 ## Deploy with GitHub Actions
 
 Set the repository variable `ENABLE_DOCKER_COMPOSE_DEPLOY` to `true` after configuring the server and secrets. The included `.github/workflows/deploy-docker-compose.yml` workflow then runs the deployment commands on the server when manually triggered from GitHub Actions.
