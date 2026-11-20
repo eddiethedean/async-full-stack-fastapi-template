@@ -19,9 +19,7 @@ jobs:
       BACKEND_IMAGE: asf-backend:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-      SECRET_KEY: ${{ secrets.SECRET_KEY }}
       FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
-      FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
       # Keep Compose's project naming and override every mail setting, even when unset.
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_PORT: ${{ vars.SMTP_PORT }}
@@ -29,11 +27,8 @@ jobs:
       SMTP_SSL: ${{ vars.SMTP_SSL }}
       SMTP_TIMEOUT_SECONDS: ${{ vars.SMTP_TIMEOUT_SECONDS }}
       SMTP_USER: ${{ vars.SMTP_USER }}
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      EMAIL_OUTBOX_KEYS: ${{ secrets.EMAIL_OUTBOX_KEYS }}
       EMAIL_OUTBOX_KEY_VERSION: ${{ vars.EMAIL_OUTBOX_KEY_VERSION }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE }}
       DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW }}
       DB_POOL_TIMEOUT_SECONDS: ${{ vars.DB_POOL_TIMEOUT_SECONDS }}
@@ -57,14 +52,45 @@ jobs:
         with:
           persist-credentials: false
       - name: Build
+        env:
+          # Compose interpolates the whole project before building an image.
+          SECRET_KEY: changethis
+          FIRST_SUPERUSER_PASSWORD: changethis
+          POSTGRES_PASSWORD: changethis
+          SMTP_PASSWORD: ""
+          EMAIL_OUTBOX_KEYS: ""
         run: docker compose -f compose.yml -f compose.deploy.yml build backend
       - name: Scan the deployment image
         run: bash scripts/scan-production-image.sh "$BACKEND_IMAGE"
       - name: Pull supporting service images
+        env:
+          SECRET_KEY: changethis
+          FIRST_SUPERUSER_PASSWORD: changethis
+          POSTGRES_PASSWORD: changethis
+          SMTP_PASSWORD: ""
+          EMAIL_OUTBOX_KEYS: ""
         run: docker compose -f compose.yml -f compose.deploy.yml pull --ignore-buildable
       - name: Start database
+        env:
+          SECRET_KEY: changethis
+          FIRST_SUPERUSER_PASSWORD: changethis
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SMTP_PASSWORD: ""
+          EMAIL_OUTBOX_KEYS: ""
         run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never db
       - name: Stop the previous email worker and migrate
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SMTP_PASSWORD: ""
+          EMAIL_OUTBOX_KEYS: ${{ secrets.EMAIL_OUTBOX_KEYS }}
         run: bash scripts/migrate-compose.sh -f compose.yml -f compose.deploy.yml
       - name: Start application
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_OUTBOX_KEYS: ${{ secrets.EMAIL_OUTBOX_KEYS }}
         run: docker compose -f compose.yml -f compose.deploy.yml up -d --wait --no-build --pull never
