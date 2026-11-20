@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.db import create_session, engine
 from app.core.security import verify_password
 from app.core.sessions import advance_auth_version, lock_user
+from app.email_outbox import EmailOutbox
 from app.models import User, UserCreate
 from tests.utils.user import create_random_user, user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -77,6 +78,40 @@ async def test_create_user_new_email(
         user = await crud.get_user_by_email(session=db, email=username)
         assert user
         assert user.email == created_user["email"]
+
+
+@pytest.mark.parametrize("is_active", [True, False], ids=["active", "inactive"])
+async def test_welcome_email_for_admin_provisioned_user(
+    client: AsyncClient,
+    superuser_token_headers: dict[str, str],
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    is_active: bool,
+) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    email = random_email()
+    response = await client.post(
+        f"{settings.API_V1_STR}/users/",
+        headers=superuser_token_headers,
+        json={
+            "email": email,
+            "password": random_lower_string(),
+            "is_active": is_active,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["is_active"] is is_active
+
+    jobs = (
+        await db.exec(select(EmailOutbox).where(col(EmailOutbox.recipient) == email))
+    ).all()
+    if is_active:
+        assert len(jobs) == 1
+        assert jobs[0].kind == "welcome"
+        assert str(jobs[0].user_id) == response.json()["id"]
+    else:
+        assert not jobs
 
 
 async def test_get_existing_user_as_superuser(
@@ -802,7 +837,7 @@ async def test_delete_user_without_privileges(
 async def test_pending_invitation_activates_only_on_acceptance(
     client: AsyncClient, superuser_token_headers: dict[str, str], db: AsyncSession
 ) -> None:
-    from app.email_outbox import EmailOutbox, get_cipher
+    from app.email_outbox import get_cipher
 
     email = random_email()
     with (
