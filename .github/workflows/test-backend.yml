@@ -2,8 +2,7 @@ name: Test Backend
 
 on:
   push:
-    branches:
-      - master
+    branches: ['**']
   pull_request:
 permissions:
   contents: read
@@ -13,6 +12,7 @@ concurrency:
 
 jobs:
   test-backend:
+    if: github.event_name != 'push' || github.event.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -44,7 +44,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## Configure Continuous Deployment
 
-After configuring the application and repository secrets, set the repository variable `ENABLE_FASTAPI_CLOUD_DEPLOY` to `true`. The included `.github/workflows/deploy.yml` workflow then builds the frontend, prepares the database, and deploys on pushes to `master`. You can also run it manually from the **Actions** tab.
+After configuring the application and repository secrets, set the repository variable `ENABLE_FASTAPI_CLOUD_DEPLOY` to `true`. The included `.github/workflows/deploy.yml` workflow then builds the frontend, prepares the database, and deploys on pushes to the repository’s default branch that include changes outside `release-notes.md`. You can also run it manually from the **Actions** tab once deployment is enabled.
 
 Log in to FastAPI Cloud and configure the [deploy token](https://fastapicloud.com/docs/advanced-features/deploy-tokens/) and application ID as GitHub repository secrets:
 
@@ -113,6 +113,9 @@ before restoring production data.
 ## GitHub Repository Automation
 
 The **Prepare Release** workflow uses the repository's `GITHUB_TOKEN` to open a release pull request. To use it, enable **Allow GitHub Actions to create and approve pull requests** under **Settings** > **Actions** > **General**. Add entries under **Latest Changes** in `release-notes.md` before preparing a release.
+
+Push checks follow the repository's default branch in **Settings** > **Branches**.
+Pull request checks run independently of the default branch name.
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 
