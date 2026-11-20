@@ -59,7 +59,7 @@ jobs:
               assert env["SMTP_TLS"] == "true"
               assert env["SMTP_SSL"] == "false"
           '
-      - name: Verify production workflow settings preserve the existing project
+      - name: Verify production project, worker restart policy, and SMTP settings
         run: |
           project_dir=$(mktemp -d)
           trap 'rm -rf "$project_dir"' EXIT
@@ -82,6 +82,7 @@ jobs:
               config = json.loads(subprocess.check_output(command, env=env))
               assert config["name"] == "asf-existing-stack"
               assert config["volumes"]["app-db-data"]["name"] == "asf-existing-stack_app-db-data"
+              assert config["services"]["email-worker"]["restart"] == "unless-stopped"
               for name in ("backend", "email-worker"):
                   settings = config["services"][name]["environment"]
                   assert settings["SMTP_HOST"] == host
