@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import sentry_sdk
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
@@ -85,7 +85,20 @@ async def handle_duplicate_email(
     )
 
 
+async def reject_api_frontend_fallback(request: Request) -> None:
+    path = request.scope["path"]
+    root_path = request.scope.get("root_path", "")
+    if root_path and (path == root_path or path.startswith(f"{root_path}/")):
+        path = path.removeprefix(root_path)
+
+    api_prefix = settings.API_V1_STR
+    if api_prefix and (path == api_prefix or path.startswith(f"{api_prefix}/")):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
 # Preserve FastAPI's startup check outside its development mode.
 if os.getenv("FASTAPI_ENV") != "development" or FRONTEND_DIR.is_dir():
-    app.frontend("/", directory=FRONTEND_DIR)
+    frontend_router = APIRouter(dependencies=[Depends(reject_api_frontend_fallback)])
+    frontend_router.frontend("/", directory=FRONTEND_DIR)
+    app.include_router(frontend_router)
