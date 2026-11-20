@@ -117,12 +117,10 @@ exit. For UI mode, open <http://127.0.0.1:9323> and run the setup project before
 running tests that require sign-in. Playwright verifies test mode before signing
 in. The browser test setup routes are excluded from the public client.
 
-The backend command checks Alembic schema drift. The Compose runner also
-rehearses the upgrade from the last release using a second disposable database
-with a sample account and item. The check signs in to the upgraded account over
-both transports, reads the existing item, queues recovery mail, and verifies the
-recovery limit. The Playwright workflow checks that regenerating the SDK and
-React Email exports produces no tracked changes.
+The backend command applies the initial Alembic revision to the disposable
+database, checks schema drift, and runs the integration tests. The Playwright
+workflow checks that regenerating the SDK and React Email exports produces no
+tracked changes.
 
 CI audits the locked Python dependencies and checks high and critical Bun
 advisories. The built production image is scanned for high and critical issues

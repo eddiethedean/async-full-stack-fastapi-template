@@ -78,37 +78,24 @@ When the tests run, they generate `htmlcov/index.html`. Open it in your browser 
 
 ## Migrations
 
-Make sure you create a revision of your models and upgrade the database with that revision every time you change them. From the `backend` directory, use `uv` to run Alembic against the PostgreSQL container:
+On an empty PostgreSQL database, `scripts/prestart.sh` applies the initial
+Alembic revision, including the account email triggers, and creates the
+configured first superuser.
 
-* Alembic is already configured to import your SQLModel models from `./backend/app/models.py`.
-
-* After changing a model (for example, adding a column), create a revision:
+After changing your project's SQLModel models, generate a new revision from
+the `backend` directory:
 
 ```console
 $ uv run alembic revision --autogenerate -m "Add column last_name to User model"
 ```
 
-* Commit to the git repository the files generated in the alembic directory.
-
-* After creating the revision, run the migration in the database (this is what will actually change the database):
+Review the revision and commit it. Apply it to a disposable database and verify
+that the database schema matches the models:
 
 ```console
 $ uv run alembic upgrade head
+$ uv run alembic check
 ```
-
-If you don't want to use migrations at all, uncomment the lines in the file at `./backend/app/core/db.py` that end in:
-
-```python
-SQLModel.metadata.create_all(engine)
-```
-
-and comment the line in the file `scripts/prestart.sh` that contains:
-
-```console
-$ alembic upgrade head
-```
-
-If you don't want to start with the default models and want to remove them / modify them, from the beginning, without having any previous revision, you can remove the revision files (`.py` Python files) under `./backend/app/alembic/versions/`. And then create a first migration as described above.
 
 ## Email Templates
 

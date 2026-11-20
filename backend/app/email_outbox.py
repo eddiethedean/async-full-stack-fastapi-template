@@ -89,7 +89,7 @@ async def enqueue_email(
     kind: EmailKind,
     recipient: str,
     deduplication_key: str,
-    user_id: uuid.UUID | None = None,
+    user_id: uuid.UUID,
     token: str | None = None,
     expires_delta: timedelta = timedelta(hours=48),
 ) -> None:
