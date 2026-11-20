@@ -1,8 +1,12 @@
 import asyncio
 from collections.abc import Callable
 from datetime import timedelta
+from email.headerregistry import Address
+from email.parser import BytesParser
+from email.policy import default
+from functools import partial
 from logging import INFO, LogRecord
-from smtplib import SMTPConnectError, SMTPRecipientsRefused
+from smtplib import SMTP, SMTPConnectError, SMTPRecipientsRefused
 from threading import Event
 from typing import Any
 from unittest.mock import patch
@@ -481,6 +485,7 @@ async def test_admin_mail_probe_uses_configured_transport(
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(settings, "SMTP_PORT", 1025)
     monkeypatch.setattr(settings, "EMAILS_FROM_EMAIL", "from@example.com")
+    monkeypatch.setattr(settings, "EMAILS_FROM_NAME", "Example, Inc.")
     monkeypatch.setattr(settings, "SMTP_USER", "test")
     monkeypatch.setattr(settings, "SMTP_PASSWORD", "test-only")
     monkeypatch.setattr(settings, "SMTP_TLS", tls)
@@ -490,7 +495,8 @@ async def test_admin_mail_probe_uses_configured_transport(
         patch("app.utils.SMTP_SSL") as smtp_ssl,
     ):
         connection = (smtp_ssl if ssl else smtp).return_value
-        connection.send_message.return_value = {}
+        connection.send_message.side_effect = partial(SMTP.send_message, connection)
+        connection.sendmail.return_value = {}
         response = await client.post(
             f"{settings.API_V1_STR}/utils/test-email/",
             headers=superuser_token_headers,
@@ -499,7 +505,14 @@ async def test_admin_mail_probe_uses_configured_transport(
         assert response.status_code == 201
         assert connection.starttls.call_count == int(tls and not ssl)
         connection.login.assert_called_once_with("test", "test-only")
-        message = connection.send_message.call_args.args[0]
+        connection.sendmail.assert_called_once()
+        sender, recipients, wire_message, *_ = connection.sendmail.call_args.args
+        assert sender == "from@example.com"
+        assert recipients == ["recipient@example.com"]
+        message = BytesParser(policy=default).parsebytes(wire_message)
+        assert message["From"].addresses == (
+            Address(display_name="Example, Inc.", addr_spec="from@example.com"),
+        )
         assert message["To"] == "recipient@example.com"
 
 
