@@ -1,0 +1,72 @@
+name: Check push branch
+
+on:
+  workflow_call:
+    inputs:
+      pushed-ref:
+        description: Full ref from the push event
+        required: true
+        type: string
+      cancel-older:
+        description: Cancel older runs after an exact default branch match
+        type: boolean
+        default: false
+    outputs:
+      matches:
+        description: Whether the pushed ref exactly matches the default branch
+        value: ${{ jobs.check.outputs.matches }}
+
+# Callers opt in with actions: write on this job alone.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matches: ${{ steps.compare.outputs.matches }}
+    steps:
+      - name: Match the default branch with exact case
+        id: compare
+        env:
+          PUSH_REF: ${{ inputs.pushed-ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          matches=false
+          if [ "$PUSH_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+            matches=true
+          fi
+          printf 'matches=%s\n' "$matches" >> "$GITHUB_OUTPUT"
+      - name: Cancel older runs of this workflow
+        if: inputs.cancel-older && steps.compare.outputs.matches == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUSH_REF: ${{ inputs.pushed-ref }}
+        run: |
+          set -euo pipefail
+          runs="repos/$GITHUB_REPOSITORY/actions/runs"
+          workflow_id=$(gh api "$runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          workflow_runs="repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs"
+          branch=${PUSH_REF#refs/heads/}
+
+          # Run numbers increase within the caller workflow. Gate completion
+          # order can differ, so never cancel by arrival in a concurrency group.
+          older_runs=$(
+            for status in queued in_progress waiting requested pending; do
+              gh api --paginate --method GET "$workflow_runs" \
+                -f branch="$branch" -f status="$status" -F per_page=100 |
+                jq -r --arg branch "$branch" --argjson repo "$GITHUB_REPOSITORY_ID" \
+                  --argjson workflow "$workflow_id" --argjson current "$GITHUB_RUN_NUMBER" '
+                  .workflow_runs[]
+                  | select(.head_branch == $branch and .head_repository.id == $repo)
+                  | select(.workflow_id == $workflow and (.event == "push" or .event == "workflow_dispatch"))
+                  | select((.run_number | type) == "number" and .run_number < $current)
+                  | .id
+                ' || exit 1
+            done | sort -u
+          )
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            if ! gh api --method POST --silent "$runs/$run_id/cancel"; then
+              # A run can finish between listing it and requesting cancellation.
+              [ "$(gh api "$runs/$run_id" --jq .status)" = completed ] || exit 1
+            fi
+          done <<< "$older_runs"

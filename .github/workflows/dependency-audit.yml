@@ -2,7 +2,7 @@ name: Audit Dependencies
 
 on:
   push:
-    branches: [master]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -10,11 +10,25 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Isolate pushes until the exact-ref gate can cancel only older runs.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  check-push-branch:
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' && github.event.ref || github.ref) == format('refs/heads/{0}', github.event.repository.default_branch)
+    uses: $/.github/workflows/check-push-branch.yml
+    permissions:
+      actions: write
+    with:
+      cancel-older: true
+      pushed-ref: ${{ github.event_name == 'push' && github.event.ref || github.ref }}
+
   audit:
+    needs: check-push-branch
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.check-push-branch.outputs.matches == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

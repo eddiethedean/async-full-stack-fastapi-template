@@ -44,7 +44,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## Configure Continuous Deployment
 
-After configuring the application and repository secrets, set the repository variable `ENABLE_FASTAPI_CLOUD_DEPLOY` to `true`. The included `.github/workflows/deploy.yml` workflow then builds the frontend, prepares the database, and deploys on pushes to `master`. You can also run it manually from the **Actions** tab.
+After configuring the application and repository secrets, set the repository variable `ENABLE_FASTAPI_CLOUD_DEPLOY` to `true`. The included `.github/workflows/deploy.yml` workflow then builds the frontend, prepares the database, and deploys on pushes to the repository’s default branch that include changes outside `release-notes.md`. You can also run it manually from the **Actions** tab once deployment is enabled.
 
 Log in to FastAPI Cloud and configure the [deploy token](https://fastapicloud.com/docs/advanced-features/deploy-tokens/) and application ID as GitHub repository secrets:
 
@@ -131,6 +131,10 @@ uv run python scripts/prepare_release.py prepare patch --release-notes-file "$pr
 uv run python scripts/prepare_release.py release-notes --release-notes-file "$preview_notes"
 rm "$preview_notes"
 ```
+
+Push checks follow the repository's configured default branch. You can
+[change the default branch](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-branches-in-your-repository/changing-the-default-branch)
+in repository settings. Pull request checks run independently of the default branch name.
 
 The pre-commit workflow reports formatting and generated-client changes for contributors to apply locally.
 

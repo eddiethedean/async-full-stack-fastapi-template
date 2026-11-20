@@ -2,8 +2,7 @@ name: Playwright Tests
 
 on:
   push:
-    branches:
-    - master
+    branches: ['**']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -15,11 +14,25 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Isolate pushes until the exact-ref gate can cancel only older runs.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  check-push-branch:
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' && github.event.ref || github.ref) == format('refs/heads/{0}', github.event.repository.default_branch)
+    uses: $/.github/workflows/check-push-branch.yml
+    permissions:
+      actions: write
+    with:
+      cancel-older: true
+      pushed-ref: ${{ github.event_name == 'push' && github.event.ref || github.ref }}
+
   changes:
+    needs: check-push-branch
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.check-push-branch.outputs.matches == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -56,7 +69,7 @@ jobs:
   test-playwright:
     needs:
       - changes
-    if: ${{ needs.changes.outputs.changed == 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.changed == 'true' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     env:
@@ -122,7 +135,7 @@ jobs:
       - test-playwright
       - changes
     # Merge reports after playwright-tests, even if some shards have failed
-    if: ${{ !cancelled() && needs.changes.outputs.changed == 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.changed == 'true' && needs.test-playwright.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -153,7 +166,7 @@ jobs:
 
   # https://github.com/marketplace/actions/alls-green#why
   alls-green-playwright:  # This job does nothing and is only used for the branch protection
-    if: always()
+    if: always() && needs.changes.result != 'skipped'
     needs:
       - changes
       - test-playwright
