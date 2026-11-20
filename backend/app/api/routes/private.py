@@ -15,7 +15,6 @@ def test_mode() -> dict[str, bool]:
 
 class PrivateUserCreate(UserRegister):
     full_name: str = Field(max_length=255)
-    is_verified: bool = False
 
 
 @router.post("/users/", response_model=UserPublic)
