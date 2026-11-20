@@ -73,6 +73,11 @@ def check_workflow_gates() -> None:
 
         assert jobs[PUSH_GATE]["uses"] == SHARED_WORKFLOW, workflow
         if workflow in {"dependency-audit", "playwright"}:
+            assert config["run-name"] == (
+                "${{ github.event_name == 'workflow_dispatch' "
+                "&& startsWith(github.ref, 'refs/heads/') "
+                "&& format('Manual branch CI on {0}', github.ref) || '' }}"
+            )
             assert jobs[PUSH_GATE]["if"] == (
                 "(github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/')) || "
                 "(github.event_name == 'push' && github.event.ref == "
@@ -190,7 +195,13 @@ def check_monotonic_cancellation() -> None:
         run(406, 6, workflow_id=102),
         run(407, 7, head_repository={"id": 34, "full_name": "fixture/fork"}),
         run(408, 8, event="pull_request"),
-        run(409, 8, event="workflow_dispatch", status="queued"),
+        run(
+            409,
+            8,
+            event="workflow_dispatch",
+            status="queued",
+            display_title=f"Manual branch CI on refs/heads/{branch}",
+        ),
         run(410, 9),
         run(411, 10),
         run(412, 4, status="completed"),
@@ -261,15 +272,33 @@ def check_monotonic_cancellation() -> None:
         )
         assert execute(410, 9, succeeds=False, MOCK_QUERY_FAILURE="queued") == []
 
-        # A manual run for the case-only sibling can cancel older runs of
-        # that branch while leaving every run on the default branch alone.
-        assert execute(
+        # GitHub lists manual tag runs under the same short head_branch.
+        # Only the exact branch run carries a matching full ref in its title.
+        manual_runs = [
+            *runs,
+            run(
+                413,
+                8,
+                head_branch="trunk/Main",
+                event="workflow_dispatch",
+                display_title="Manual branch CI on refs/heads/trunk/Main",
+            ),
+            run(
+                414,
+                8,
+                head_branch="trunk/Main",
+                event="workflow_dispatch",
+                display_title="Playwright Tests",
+            ),
+        ]
+        cancelled = execute(
             411,
             10,
             GITHUB_EVENT_NAME="workflow_dispatch",
             PUSH_REF="refs/heads/trunk/Main",
-            MOCK_RUNS=json.dumps([*runs, run(413, 8, head_branch="trunk/Main")]),
-        ) == ["405", "413"]
+            MOCK_RUNS=json.dumps(manual_runs),
+        )
+        assert cancelled == ["405", "413"], cancelled
 
 
 if __name__ == "__main__":

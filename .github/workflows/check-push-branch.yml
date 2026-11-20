@@ -49,15 +49,21 @@ jobs:
 
           # Run numbers increase within the caller workflow. Gate completion
           # order can differ, so never cancel by arrival in a concurrency group.
+          # Manual tag runs can have the same short head_branch. Only manual
+          # branch runs with a matching full ref in the title are identifiable.
           older_runs=$(
             for status in queued in_progress waiting requested pending; do
               gh api --paginate --method GET "$workflow_runs" \
                 -f branch="$branch" -f status="$status" -F per_page=100 |
-                jq -r --arg branch "$branch" --argjson repo "$GITHUB_REPOSITORY_ID" \
+                jq -r --arg branch "$branch" --arg ref "$PUSH_REF" --argjson repo "$GITHUB_REPOSITORY_ID" \
                   --argjson workflow "$workflow_id" --argjson current "$GITHUB_RUN_NUMBER" '
                   .workflow_runs[]
                   | select(.head_branch == $branch and .head_repository.id == $repo)
-                  | select(.workflow_id == $workflow and (.event == "push" or .event == "workflow_dispatch"))
+                  | select(.workflow_id == $workflow)
+                  | select(.event == "push" or (
+                      .event == "workflow_dispatch"
+                      and .display_title == ("Manual branch CI on " + $ref)
+                    ))
                   | select((.run_number | type) == "number" and .run_number < $current)
                   | .id
                 ' || exit 1

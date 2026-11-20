@@ -1,4 +1,5 @@
 name: Audit Dependencies
+run-name: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && format('Manual branch CI on {0}', github.ref) || '' }}
 
 on:
   push:
