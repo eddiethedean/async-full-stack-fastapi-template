@@ -1,9 +1,12 @@
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.pagination import PaginationParams
@@ -359,3 +362,53 @@ async def test_delete_item_not_enough_permissions(
     assert response.status_code == 403
     content = response.json()
     assert content["detail"] == "Not enough permissions"
+
+
+@pytest.mark.parametrize("admin_deletion", [False, True], ids=["self", "admin"])
+async def test_account_deletion_cascades_to_items(
+    client: AsyncClient,
+    db: AsyncSession,
+    superuser_token_headers: dict[str, str],
+    admin_deletion: bool,
+) -> None:
+    email, password = random_email(), random_lower_string()
+    user = await create_user(
+        session=db, user_create=UserCreate(email=email, password=password)
+    )
+    user_id = user.id
+    db.add_all(Item(title=f"Item {index}", owner_id=user_id) for index in range(3))
+    await db.commit()
+
+    if admin_deletion:
+        target = str(user_id)
+        headers = superuser_token_headers
+    else:
+        target = "me"
+        headers = await user_authentication_headers(
+            client=client, email=email, password=password
+        )
+
+    item_statements: list[str] = []
+
+    def capture_item_queries(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
+            item_statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+    try:
+        response = await client.delete(
+            f"{settings.API_V1_STR}/users/{target}", headers=headers
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+
+    assert response.status_code == 200
+    assert not item_statements
+    assert not (await db.exec(select(Item).where(Item.owner_id == user_id))).all()

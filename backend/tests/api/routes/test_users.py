@@ -669,21 +669,11 @@ async def test_concurrent_superuser_removals_preserve_one_admin(
 
 
 async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
-    import re
-
-    from sqlalchemy import event
-
-    from app.core.db import engine
-    from app.models import Item
-
     username = random_email()
     password = random_lower_string()
     user_in = UserCreate(email=username, password=password)
     user = await crud.create_user(session=db, user_create=user_in)
     user_id = user.id
-    db.add_all(Item(title=f"Item {index}", owner_id=user_id) for index in range(3))
-    await db.commit()
-
     login_data = {
         "username": username,
         "password": password,
@@ -693,35 +683,12 @@ async def test_delete_user_me(client: AsyncClient, db: AsyncSession) -> None:
     a_token = tokens["access_token"]
     headers = {"Authorization": f"Bearer {a_token}"}
 
-    item_statements: list[str] = []
-
-    def capture_item_queries(
-        _conn: object,
-        _cursor: object,
-        statement: str,
-        _parameters: object,
-        _context: object,
-        _executemany: bool,
-    ) -> None:
-        if re.search(r"\bFROM item\b", statement, flags=re.IGNORECASE):
-            item_statements.append(statement)
-
-    event.listen(engine.sync_engine, "before_cursor_execute", capture_item_queries)
-    try:
-        r = await client.delete(
-            f"{settings.API_V1_STR}/users/me",
-            headers=headers,
-        )
-    finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", capture_item_queries)
+    r = await client.delete(f"{settings.API_V1_STR}/users/me", headers=headers)
     assert r.status_code == 200
     deleted_user = r.json()
     assert deleted_user["message"] == "User deleted successfully"
     result = (await db.exec(select(User).where(User.id == user_id))).first()
     assert result is None
-
-    assert not item_statements
-    assert not (await db.exec(select(Item).where(Item.owner_id == user_id))).all()
 
 
 async def test_delete_user_me_as_superuser(
