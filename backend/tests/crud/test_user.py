@@ -1,11 +1,11 @@
 import pytest
 from fastapi.encoders import jsonable_encoder
-from pwdlib.hashers.bcrypt import BcryptHasher
+from pwdlib.hashers.argon2 import Argon2Hasher
 from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import crud
-from app.core.security import verify_password
+from app.core.security import DUMMY_HASH, verify_password
 from app.models import User, UserCreate, UserUpdate
 from tests.utils.utils import random_email, random_lower_string
 
@@ -124,28 +124,16 @@ async def test_update_user(db: AsyncSession) -> None:
     assert verified
 
 
-async def test_authenticate_user_with_bcrypt_upgrades_to_argon2(
+async def test_authenticate_user_rehashes_outdated_argon2_parameters(
     db: AsyncSession,
 ) -> None:
-    """Test that a user with bcrypt password hash gets upgraded to argon2 on login."""
     email = random_email()
     password = random_lower_string()
-
-    # Create a bcrypt hash directly (simulating legacy password)
-    bcrypt_hasher = BcryptHasher()
-    bcrypt_hash = bcrypt_hasher.hash(password)
-    assert bcrypt_hash.startswith("$2")  # bcrypt hashes start with $2
-
-    # Create user with bcrypt hash directly in the database
-    user = User(email=email, hashed_password=bcrypt_hash)
+    old_hash = Argon2Hasher(memory_cost=8192).hash(password)
+    user = User(email=email, hashed_password=old_hash)
     db.add(user)
     await db.commit()
-    await db.refresh(user)
 
-    # Verify the hash is bcrypt before authentication
-    assert user.hashed_password.startswith("$2")
-
-    # Authenticate - this should upgrade the hash to argon2
     authenticated_user = await crud.authenticate(
         session=db, email=email, password=password
     )
@@ -154,12 +142,29 @@ async def test_authenticate_user_with_bcrypt_upgrades_to_argon2(
 
     await db.refresh(authenticated_user)
 
-    # Verify the hash was upgraded to argon2
-    assert authenticated_user.hashed_password.startswith("$argon2")
+    assert authenticated_user.hashed_password != old_hash
 
     verified, updated_hash = verify_password(
         password, authenticated_user.hashed_password
     )
     assert verified
-    # Should not need another update since it's already argon2
     assert updated_hash is None
+
+
+async def test_authenticate_unknown_user_runs_dummy_argon2_verification(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    password = random_lower_string()
+    calls: list[tuple[str, str]] = []
+
+    def verify(plain: str, hashed: str) -> tuple[bool, str | None]:
+        calls.append((plain, hashed))
+        return verify_password(plain, hashed)
+
+    monkeypatch.setattr(crud, "verify_password", verify)
+    assert (
+        await crud.authenticate(session=db, email=random_email(), password=password)
+        is None
+    )
+    assert DUMMY_HASH.startswith("$argon2id$")
+    assert calls == [(password, DUMMY_HASH)]
