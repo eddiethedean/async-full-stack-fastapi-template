@@ -210,6 +210,36 @@ Projects generated from this template run the same audits without inherited
 advisory exceptions. Document any temporary exception your own repository
 needs and remove it when it expires or a fix becomes available.
 
+## Removing the Items Example
+
+If your new project does not use Items, remove the example before initializing
+its database.
+
+1. Remove the `ItemBase` through `ItemsPublic` declarations, the item index,
+   and `User.items` from `backend/app/models.py`. Remove the `item` table and
+   its index from the initial revision in `backend/app/alembic/versions/`,
+   including the table drop in `downgrade()`.
+2. Remove the Items router from `backend/app/api/main.py` and delete
+   `backend/app/api/routes/items.py`. Remove `create_item` and its item model
+   imports from `backend/app/crud.py`.
+3. Delete `frontend/src/routes/_layout/items.tsx`,
+   `frontend/src/components/Items/`, and
+   `frontend/src/components/Pending/PendingItems.tsx`. Remove the Items link
+   and its icon import from `frontend/src/components/Sidebar/AppSidebar.tsx`.
+   Run `bash scripts/generate-client.sh` to update the API client and run
+   `bun run dev` to regenerate the TanStack route tree.
+4. Remove the Items-specific backend tests in
+   `backend/tests/api/routes/test_items.py` and
+   `backend/tests/test_database_schema.py`, along with
+   `backend/tests/utils/item.py`. Remove `frontend/tests/items.spec.ts` and its
+   item data helpers. Adapt the late-response login tests in
+   `frontend/tests/login.spec.ts` to use your own private feature, or remove
+   their Items setup and assertions while keeping the session checks. Replace
+   `/items` in the Docker Compose smoke test with a route from your project.
+5. Run `bash scripts/test.sh` to check schema creation and the account routes
+   against a fresh database. Run `bun run --filter frontend build` to check the
+   frontend and generated routes.
+
 ## Docker Compose Files and Environment Variables
 
 The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.
