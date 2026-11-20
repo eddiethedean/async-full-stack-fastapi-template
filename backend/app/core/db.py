@@ -36,7 +36,12 @@ async def init_db(session: AsyncSession) -> None:
     #     await connection.run_sync(SQLModel.metadata.create_all)
 
     email = settings.FIRST_SUPERUSER
-    if await crud.get_user_by_email(session=session, email=email):
+    user = await crud.get_user_by_email(session=session, email=email)
+    if user is not None:
+        if not (user.is_active and user.is_superuser):
+            raise RuntimeError(
+                "FIRST_SUPERUSER already exists and must be an active superuser."
+            )
         return
 
     user_in = UserCreate(
